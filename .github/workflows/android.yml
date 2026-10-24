@@ -2,7 +2,8 @@ name: Android APK
 
 on:
   push:
-    branches: [ main ]
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
@@ -10,37 +11,80 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    name: Build, test and publish MT_PING
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Install Java 17
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
-      - uses: android-actions/setup-android@v3
-      - uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.10.2'
-      - name: Install Android platform
-        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
-      - name: Build and unit-test
-        run: gradle --no-daemon :app:testDebugUnitTest :app:assembleDebug
-      - name: Prepare installable APK
-        run: cp app/build/outputs/apk/debug/app-debug.apk MT_PING.apk
-      - uses: actions/upload-artifact@v4
-        with:
-          name: MT_PING-Android-APK
-          path: MT_PING.apk
-      - name: Publish download release
-        env:
-          GH_TOKEN: ${{ github.token }}
+
+      - name: Install Android SDK tools
+        uses: android-actions/setup-android@v3
+
+      - name: Install required Android SDK
         shell: bash
         run: |
-          TAG="v1.0.0"
-          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$TAG" MT_PING.apk --clobber --repo "$GITHUB_REPOSITORY"
-          else
-            gh release create "$TAG" MT_PING.apk --repo "$GITHUB_REPOSITORY" \
-              --title "MT_PING v1.0.0" \
-              --notes "Android 8.0+ / debug-signed APK for sideloading. Background ICMP service, packet history, live outage timer and CSV export."
-          fi
+          set -euxo pipefail
+          sdkmanager --install "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Install Gradle 8.10.2
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+          add-job-summary: 'on-failure'
+
+      - name: Print build environment
+        shell: bash
+        run: |
+          set -euxo pipefail
+          java -version
+          gradle --version
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          ls -la app/src/main/java/online/mtradius/mtping/
+
+      - name: Compile Android and run JVM tests
+        shell: bash
+        run: |
+          set -euxo pipefail
+          gradle --no-daemon --stacktrace :app:assembleDebug :app:testDebugUnitTest
+
+      - name: Check and name output
+        shell: bash
+        run: |
+          set -euxo pipefail
+          test -s app/build/outputs/apk/debug/app-debug.apk
+          cp app/build/outputs/apk/debug/app-debug.apk MT_PING.apk
+          ls -lh MT_PING.apk
+          sha256sum MT_PING.apk
+
+      - name: Upload APK as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MT_PING-APK
+          path: MT_PING.apk
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Publish MT_PING release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.1
+          name: MT_PING v1.0.1
+          target_commitish: ${{ github.sha }}
+          body: |
+            Android 8.0+ debug-signed APK.
+            Preset targets: 10.0.0.1, 8.8.8.8, www.google.com.
+            Foreground ICMP monitor, per-packet results, outage timer,
+            local CSV logs and packet statistics.
+            Android can still stop background monitoring under certain battery policies.
+          files: MT_PING.apk
+          fail_on_unmatched_files: true
+          overwrite_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
