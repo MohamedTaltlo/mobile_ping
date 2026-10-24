@@ -47,6 +47,30 @@ jobs:
           echo "ANDROID_HOME=$ANDROID_HOME"
           ls -la app/src/main/java/online/mtradius/mtping/
 
+      - name: Stage optional Android Nmap executable
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Upstream Android Nmap 7.31. Staging is optional, never a build blocker.
+          mkdir -p /tmp/mt-nmap
+          if curl --fail --location --retry 2 --max-time 100 -o /tmp/mt-nmap.zip https://github.com/kost/nmap-android/releases/download/v7.31/nmap-7.31-binaries-arm64-v8a.zip; then
+            unzip -q /tmp/mt-nmap.zip -d /tmp/mt-nmap
+            echo "Nmap archive contents:"
+            find /tmp/mt-nmap -type f | head -40
+            BIN="$(find /tmp/mt-nmap -type f | grep -E '/(nmap|libnmap[.]so)$' | head -1 || true)"
+            if [ -n "$BIN" ]; then
+              mkdir -p app/src/main/jniLibs/arm64-v8a
+              cp "$BIN" app/src/main/jniLibs/arm64-v8a/libnmap.so
+              chmod 755 app/src/main/jniLibs/arm64-v8a/libnmap.so
+              file app/src/main/jniLibs/arm64-v8a/libnmap.so
+              echo "Nmap native executable staged"
+            else
+              echo "No compatible executable found: TCP fallback will be used"
+            fi
+          else
+            echo "Nmap package download unavailable: TCP fallback will be used"
+          fi
+
       - name: Compile Android and run JVM tests
         shell: bash
         run: |
@@ -73,23 +97,20 @@ jobs:
       - name: Publish MT_TOOLS release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v2.1.1
-          name: MT_TOOLS v2.1.1
+          tag_name: v2.1.2
+          name: MT_TOOLS v2.1.2
           target_commitish: ${{ github.sha }}
           body: |
-            **MT_TOOLS v2.1.1 — إصلاحات فني الصيانة**
+            **MT_TOOLS v2.1.2 — إصلاحات الواجهة وفحص المنافذ**
 
-            - القائمة الجانبية تفتح من اليسار بجانب زر القائمة.
-            - إيقاف فحص LAN أثناء التشغيل مع الحفاظ على النتائج المكتشفة.
-            - المحافظة على اسم الراوتر ومعلومات UPnP المكتشفة وعدم استبدالها بتصنيف عام.
-            - سطر الماك يظهر فقط عندما يُكتشف؛ تسمية الماك بالعربية.
-            - فحص جميع منافذ TCP من 1 إلى 65535 مع مؤشر تقدم وزر إيقاف.
-            - تصحيح جميع تسميات «جاري» إلى «جار» في الواجهة.
-            - فوتر في جميع الصفحات: Developed by: MT_RADIUS 2019-السنة الحالية، مع رابط واتساب.
-            - معالجة اهتزاز موضع الشاشة عند Done بلوحة الأرقام، وضبط منطقة شريط الحالة.
-            - استمرار مراقبة Ping وسجل الانقطاعات وUBNT Discovery دون تغيير.
-
-            تنبيه: أداة اكتشاف الأجهزة تعرض فقط البيانات التي تقدمها الشبكة والأنظمة فعلياً.
+            - Sidebar تفتح من اليمين وتُغلق بالسحب الأفقي.
+            - إزالة الترويسات الثانوية المكررة من صفحات الأدوات.
+            - إخفاء سطر الماك غير المتاح وإزالة سطر طريقة التعرّف.
+            - فحص Nmap الأصلي بنمط TCP Connect عند توفره، وإلا فاحص TCP غير متزامن وسريع.
+            - مؤشر تقدم وإيقاف فحص المنافذ وأجهزة LAN.
+            - مصدر Nmap Android الاختياري: kost/nmap-android v7.31 (2016).
+            - على الأجهزة الحديثة قد يرفض النظام تشغيل إصدار Nmap القديم.
+            - بلا حاجة لروت في فحص TCP Connect؛ وظائف SYN والفحص العميق قد تتطلب صلاحيات أعلى.
           files: MT_TOOLS.apk
           fail_on_unmatched_files: true
           overwrite_files: true

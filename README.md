@@ -6,6 +6,15 @@ Native Android ICMP monitoring app, inspired by Termux ping output. Foreground b
 
 See the source and [build workflow](.github/workflows/android.yml). The APK is a debug-signed sideload build; it is not a Play Store release.
 
+## الإصدار 2.1.2
+
+- القائمة الجانبية تفتح من اليمين وتُغلق بالسحب أفقياً أو بالضغط خارجها.
+- إزالة العناوين الفرعية المكررة ونصوص الشرح الزائدة.
+- عدم عرض سطر الماك نهائياً إذا لم تكن قيمته متاحة، وإزالة سطر طريقة التعرّف.
+- فحص المنافذ يعتمد على Nmap TCP Connect عند نجاح تضمين وتشغيل نسخته المتوافقة مع Android؛ في الأجهزة الأخرى يستخدم فاحص TCP غير متزامن أسرع بكثير من التنفيذ المتوازي القديم.
+- تضمين Nmap Android 7.31 (إصدار قديم من 2016) اختياري خلال البناء؛ المصدر: https://github.com/kost/nmap-android، وهو ليس إصدار Nmap حديثاً ولا يدعم كل وظائف Nmap من دون root.
+- وضع العرض يوضح أي محرك تم استخدامه. لا يتم وصف الفاحص البديل بأنه Nmap أصلي.
+
 ## الإصدار 2.1.1
 
 - القائمة الجانبية تفتح يسار الشاشة بجانب زرها.

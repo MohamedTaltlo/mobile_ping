@@ -114,12 +114,6 @@ public final class ToolsActivity extends Activity {
         menu.setOnClickListener(v->sidebar.open());
         root.addView(header);
         final String section=page;
-        String heading="network".equals(page)?"معلومات الاتصال والراوتر":
-                "scanner".equals(page)?"اكتشاف الأجهزة على الشبكة":
-                "trace".equals(page)?"تتبّع المسار Traceroute":
-                "ubnt".equals(page)?"Ubiquiti Discovery":"اختبارات فني الصيانة";
-        root.addView(text(heading,17,GREEN,true),margins(-1,-2,13,7));
-
         if(section.equals("network")) {
         LinearLayout connection=card(root,"عناوين الشبكة والراوتر");
         localText=text("عنوان الهاتف: —",14,WHITE,false);
@@ -130,7 +124,7 @@ public final class ToolsActivity extends Activity {
         gatewayText.setPadding(dp(9),dp(12),dp(9),dp(12));
         gatewayText.setBackground(surface(0xFF173245,BORDER,10));
         gatewayText.setOnClickListener(v->{if(current!=null && !current.gateway.isEmpty())openRouter(current.gateway);});
-        connection.addView(text("اضغط على عنوان Gateway لفتح لوحة الراوتر عبر HTTP.",11,MUTED,false),margins(-1,-2,0,12));
+
         connection.addView(publicText,margins(-1,-2,0,12));
         Button refresh=button("تحديث عناوين الشبكة",0xFF173245);
         connection.addView(refresh,new LinearLayout.LayoutParams(-1,dp(48)));
@@ -140,7 +134,7 @@ public final class ToolsActivity extends Activity {
         }
         if(section.equals("trace")) {
         LinearLayout tracer=card(root,"Traceroute • تتبّع المسار");
-        tracer.addView(text("وجهة الفحص (IP أو دومين)",11,MUTED,false));
+
         traceHost=new EditText(this);
         traceHost.setSingleLine(true);traceHost.setText("8.8.8.8");
         traceHost.setTextColor(WHITE);traceHost.setTextSize(16);
@@ -170,9 +164,8 @@ public final class ToolsActivity extends Activity {
         }
         if(section.equals("scanner")) {
         LinearLayout scan=card(root,"فحص الأجهزة المحلية");
-        scan.addView(text("يعمل الكشف تلقائياً بواسطة Ping وTCP وNetBIOS وUPnP وARP وجدول الجيران دون الحاجة إلى أي إعدادات.",11,MUTED,false));
-        scan.addView(text("يظهر الراوتر والهاتف مباشرة. بقية الأجهزة تُضاف وتُحدّث أثناء الفحص.",11,MUTED,false),
-                     margins(-1,-2,7,0));
+
+
         Button scanButton=button("بدء كشف الأجهزة",0xFF173245);
         scan.addView(scanButton,margins(-1,dp(50),12,0));
         ProgressBar scanProgress=new ProgressBar(this,null,android.R.attr.progressBarStyleHorizontal);
@@ -225,12 +218,15 @@ public final class ToolsActivity extends Activity {
                                     lanResults.addView(item,margins(-1,-2,5,0));
                                 }
                                 String prefix=merged.self?"▣  ":merged.gateway?"◈  ":"●  ";
+                                String mac=merged.mac==null?"":merged.mac.trim();
+                                if(mac.equalsIgnoreCase("غير متاح") ||
+                                   mac.equalsIgnoreCase("unavailable") ||
+                                   mac.equals("00:00:00:00:00:00")) mac="";
                                 String details=prefix+merged.displayName()+"  •  "+merged.ip+
                                     "\n"+merged.kind()+
                                     (merged.latency>=0?String.format(Locale.US,"  |  %.2f ms",merged.latency):"")+
-                                    (merged.mac.isEmpty()?"":"\nالماك: "+merged.mac+
-                                        (merged.vendor.isEmpty()?"":"  |  "+merged.vendor))+
-                                    "\nالتعرّف: "+(merged.source.isEmpty()?"غير محدد":merged.source);
+                                    (mac.isEmpty()?"":"\nالماك: "+mac+
+                                        (merged.vendor.isEmpty()?"":"  |  "+merged.vendor));
                                 item.setText(details);
                                 if(!merged.self)item.setOnClickListener(z->openRouter(merged.ip));
                             });
@@ -274,7 +270,7 @@ public final class ToolsActivity extends Activity {
         }
         if(section.equals("ubnt")) {
         LinearLayout ubnt=card(root,"اكتشاف أجهزة Ubiquiti • UBNT");
-        ubnt.addView(text("اكتشاف أصلي عبر UDP/10001 وليس تخميناً من ARP. الموديل وUptime يظهران فقط عند إرسالهما من الجهاز.",11,MUTED,false));
+
         Button find=button("بدء UBNT Discovery",0xFF173245);
         ubnt.addView(find,margins(-1,dp(48),10,0));
         ubntLog=text("",12,MUTED,false);ubnt.addView(ubntLog,margins(-1,-2,8,0));
@@ -333,14 +329,14 @@ public final class ToolsActivity extends Activity {
                 },"MT_TOOLS-DNS").start();
             });
 
-            LinearLayout ports=card(root,"فحص جميع منافذ TCP");
-            ports.addView(text("يتم اختبار المنافذ من 1 إلى 65535، وتظهر المنافذ المفتوحة فقط. تستطيع إيقاف الفحص بأي وقت.",11,MUTED,false));
+            LinearLayout ports=card(root,"Nmap • فحص المنافذ المفتوحة");
+    
             EditText portHost=new EditText(this);portHost.setSingleLine(true);portHost.setText("192.168.1.1");
             portHost.setTextColor(WHITE);portHost.setBackground(surface(BG,BORDER,12));
             portHost.setTextDirection(View.TEXT_DIRECTION_LTR);
             portHost.setPadding(dp(12),dp(10),dp(12),dp(10));
             ports.addView(portHost,margins(-1,dp(48),9,9));
-            Button check=button("بدء فحص المنافذ 1–65535",0xFF173245);
+            Button check=button("بدء Nmap • جميع منافذ TCP",0xFF173245);
             ports.addView(check,new LinearLayout.LayoutParams(-1,dp(53)));
             ProgressBar portsProgress=new ProgressBar(this,null,android.R.attr.progressBarStyleHorizontal);
             portsProgress.setMax(65535);
@@ -373,7 +369,7 @@ public final class ToolsActivity extends Activity {
                 Thread worker=new Thread(()->{
                     final Thread self=Thread.currentThread();
                     try{
-                        PortScanner.scan(host,stop,new PortScanner.Listener(){
+                        PortScanner.scan(this,host,stop,new PortScanner.Listener(){
                             @Override public void progress(int done,int total,int open){
                                 post(()->{
                                     if(portStop!=stop || stop.isCancelled())return;
@@ -399,7 +395,7 @@ public final class ToolsActivity extends Activity {
                         post(()->{
                             if(portsThread==self)portsThread=null;
                             check.setEnabled(true);
-                            check.setText("إعادة فحص كل منافذ TCP");
+                            check.setText("إعادة فحص المنافذ");
                             check.setBackground(surface(0xFF173245,BORDER,12));
                             if(wasStopped)portSummary.append("\nتوقف الفحص قبل اكتماله.");
                             else portsProgress.setProgress(65535);

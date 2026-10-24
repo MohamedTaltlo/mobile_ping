@@ -1,26 +1,32 @@
 package online.mtradius.mtping;
 
+import android.content.Context;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
-import java.net.Socket;
+import java.nio.channels.SelectionKey;
+import java.nio.channels.Selector;
+import java.nio.channels.SocketChannel;
+import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.Locale;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
 
-/** Full TCP connect scan, explicitly started by the user, bounded parallelism. */
+/** Full 1..65535 TCP scan: Nmap -sT when available; async NIO fallback. */
 final class PortScanner {
     interface Listener {
-        void progress(int tested, int total, int open);
-        void found(int port, String service);
+        void progress(int tested,int total,int open);
+        void found(int port,String service);
         void message(String message);
     }
     static final class Stop {
-        final AtomicBoolean cancelled = new AtomicBoolean(false);
-        void cancel() { cancelled.set(true); }
-        boolean isCancelled() { return cancelled.get() || Thread.currentThread().isInterrupted(); }
+        final AtomicBoolean cancelled=new AtomicBoolean(false);
+        volatile Process process;
+        void cancel(){
+            cancelled.set(true);
+            Process p=process;
+            if(p!=null&&p.isAlive())p.destroyForcibly();
+        }
+        boolean isCancelled(){return cancelled.get()||Thread.currentThread().isInterrupted();}
     }
     private static String service(int port) {
         switch (port) {
@@ -53,66 +59,99 @@ final class PortScanner {
             default: return "TCP";
         }
     }
-    static void scan(String host, Stop stop, Listener listener) throws InterruptedException {
-        if (!PingService.validTarget(host)) {
-            listener.message("العنوان غير صالح.");
-            return;
+
+    static void scan(Context context,String host,Stop stop,Listener output) throws InterruptedException {
+        if(!PingService.validTarget(host)){
+            output.message("العنوان غير صالح");return;
         }
+        if(NmapEngine.run(context,host,stop,output))return;
+        if(stop.isCancelled())throw new InterruptedException();
+        fastConnect(host,stop,output);
+    }
+
+    private static final class Probe {
+        final int port;
+        final long began;
+        Probe(int port,long began){this.port=port;this.began=began;}
+    }
+    private static void fastConnect(String host,Stop stop,Listener listener)throws InterruptedException {
         final InetAddress target;
-        try {
-            target = InetAddress.getByName(host);
-        } catch (Exception e) {
-            listener.message("تعذّر معرفة IP الهدف: " + e.getMessage());
-            return;
+        try{
+            target=InetAddress.getByName(host);
+        }catch(Exception e){
+            listener.message("تعذّر معرفة العنوان: "+e.getMessage());return;
         }
-        final AtomicInteger next = new AtomicInteger(1);
-        final AtomicInteger tested = new AtomicInteger();
-        final AtomicInteger found = new AtomicInteger();
-        final int workers = 48;
-        final ExecutorService pool = Executors.newFixedThreadPool(workers);
-        final java.util.concurrent.CountDownLatch done = new java.util.concurrent.CountDownLatch(workers);
-        listener.message("جار فحص جميع منافذ TCP (1–65535) للهدف " + target.getHostAddress());
-        try {
-            for (int i = 0; i < workers; i++) {
-                pool.submit(() -> {
-                    try {
-                        while (!stop.isCancelled()) {
-                            int port = next.getAndIncrement();
-                            if (port > 65535) break;
-                            try (Socket socket = new Socket()) {
-                                socket.connect(new InetSocketAddress(target, port), 400);
-                                if (!stop.isCancelled()) {
-                                    found.incrementAndGet();
-                                    listener.found(port, service(port));
-                                }
-                            } catch (Exception ignored) {
-                                // A closed/filtered port is simply not listed as open.
-                            }
-                            int count = tested.incrementAndGet();
-                            if ((count & 127) == 0 || count == 65535) {
-                                listener.progress(count, 65535, found.get());
-                            }
+        // Asynchronous connect() allows many sockets to be tested concurrently
+        // without allocating hundreds of Java threads or waiting 400ms serially.
+        final int maxInflight=256;
+        final long timeoutNs=350_000_000L;
+        int next=1,done=0,found=0;
+        int lastReported=0;
+        listener.message("جار فحص TCP سريع (بديل Nmap) للعنوان "+target.getHostAddress());
+        try(Selector selector=Selector.open()){
+            while((next<=65535||!selector.keys().isEmpty())&&!stop.isCancelled()){
+                while(next<=65535 && selector.keys().size()<maxInflight && !stop.isCancelled()){
+                    final int port=next++;
+                    SocketChannel channel=null;
+                    try{
+                        channel=SocketChannel.open();
+                        channel.configureBlocking(false);
+                        boolean ready=channel.connect(new InetSocketAddress(target,port));
+                        if(ready){
+                            found++;
+                            listener.found(port,service(port));
+                            channel.close();
+                            done++;
+                        }else{
+                            channel.register(selector,SelectionKey.OP_CONNECT,
+                                    new Probe(port,System.nanoTime()));
                         }
-                    } finally {
-                        done.countDown();
+                    }catch(Exception ex){
+                        done++;
+                        if(channel!=null)try{channel.close();}catch(Exception ignored){}
                     }
-                });
+                }
+                if(stop.isCancelled())throw new InterruptedException();
+                selector.select(30);
+                Iterator<SelectionKey> iterator=selector.selectedKeys().iterator();
+                while(iterator.hasNext()){
+                    SelectionKey key=iterator.next();
+                    iterator.remove();
+                    Probe probe=(Probe)key.attachment();
+                    try{
+                        if(key.isValid() && key.isConnectable() &&
+                           ((SocketChannel)key.channel()).finishConnect()){
+                            found++;listener.found(probe.port,service(probe.port));
+                        }
+                    }catch(Exception ignored){}
+                    finally{
+                        done++;
+                        key.cancel();
+                        try{key.channel().close();}catch(Exception ignored){}
+                    }
+                }
+                long now=System.nanoTime();
+                for(SelectionKey key:new ArrayList<>(selector.keys())){
+                    Probe probe=(Probe)key.attachment();
+                    if(probe!=null && now-probe.began>=timeoutNs){
+                        done++;
+                        key.cancel();
+                        try{key.channel().close();}catch(Exception ignored){}
+                    }
+                }
+                if(done-lastReported>=128 || done==65535){
+                    lastReported=done;
+                    listener.progress(done,65535,found);
+                }
             }
-            while (done.getCount() > 0) {
-                if (stop.isCancelled()) throw new InterruptedException();
-                done.await(200, TimeUnit.MILLISECONDS);
-            }
-            listener.progress(tested.get(), 65535, found.get());
-            listener.message(String.format(Locale.US,
-                    "اكتمل فحص TCP • %d منفذ مفتوح من %d منفذاً تم اختبارها.",
-                    found.get(), tested.get()));
-        } catch (InterruptedException e) {
-            stop.cancel();
-            listener.message("تم إيقاف الفحص عند المنفذ المفحوص رقم " + tested.get() +
-                    " • المنافذ المفتوحة المكتشفة: " + found.get());
+        }catch(InterruptedException e){
             throw e;
-        } finally {
-            pool.shutdownNow();
+        }catch(Exception e){
+            listener.message("خطأ أثناء فحص TCP: "+e.getMessage());
         }
+        if(stop.isCancelled())throw new InterruptedException();
+        listener.progress(done,65535,found);
+        listener.message(String.format(Locale.US,"انتهى فحص TCP: %d منفذ مفتوح من %d مفحوص",
+                found,done));
     }
 }

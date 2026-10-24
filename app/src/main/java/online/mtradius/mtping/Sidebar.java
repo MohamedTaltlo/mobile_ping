@@ -6,6 +6,7 @@ import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.view.Gravity;
+import android.view.MotionEvent;
 import android.view.View;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
@@ -15,11 +16,11 @@ import android.widget.TextView;
 /** A native RTL slide-out sidebar shared by all MT_TOOLS pages. */
 final class Sidebar {
     private final Activity activity;
-    private final FrameLayout overlay;
+    private final DrawerOverlay overlay;
     private final String active;
     private static final int BG=0xFF07121E,CARD=0xFF101F30,BORDER=0xFF20364B,
             GREEN=0xFF3EDAB6,WHITE=0xFFF1F5F9,MUTED=0xFF90A2B8;
-    private Sidebar(Activity activity,FrameLayout overlay,String active){
+    private Sidebar(Activity activity,DrawerOverlay overlay,String active){
         this.activity=activity;this.overlay=overlay;this.active=active;
     }
     private int dp(int px){return Math.round(px*activity.getResources().getDisplayMetrics().density);}
@@ -29,13 +30,54 @@ final class Sidebar {
         if(border!=0)d.setStroke(dp(1),border);
         return d;
     }
+
+    /** Detect a horizontal closing swipe without stealing vertical scroll events. */
+    private static final class DrawerOverlay extends FrameLayout {
+        private float startX,startY;
+        private final float threshold;
+        private boolean dragging;
+        private Runnable dismiss;
+        DrawerOverlay(Activity activity){
+            super(activity);
+            threshold=activity.getResources().getDisplayMetrics().density*56f;
+        }
+        @Override public boolean onInterceptTouchEvent(MotionEvent e) {
+            if(e.getActionMasked()==MotionEvent.ACTION_DOWN){
+                startX=e.getX(); startY=e.getY(); dragging=false;
+                return super.onInterceptTouchEvent(e);
+            }
+            if(e.getActionMasked()==MotionEvent.ACTION_MOVE){
+                float dx=e.getX()-startX, dy=e.getY()-startY;
+                if(Math.abs(dx)>threshold*.65f && Math.abs(dx)>Math.abs(dy)*1.3f){
+                    dragging=true;
+                    return true;
+                }
+            }
+            return super.onInterceptTouchEvent(e);
+        }
+        @Override public boolean onTouchEvent(MotionEvent e){
+            if(dragging && (e.getActionMasked()==MotionEvent.ACTION_UP ||
+                    e.getActionMasked()==MotionEvent.ACTION_MOVE)){
+                if(Math.abs(e.getX()-startX)>threshold){
+                    dragging=false;
+                    if(dismiss!=null)dismiss.run();
+                    return true;
+                }
+            }
+            if(e.getActionMasked()==MotionEvent.ACTION_CANCEL ||
+                    e.getActionMasked()==MotionEvent.ACTION_UP)dragging=false;
+            return true;
+        }
+    }
+
     static Sidebar attach(Activity activity,View content,String page){
         FrameLayout parent=new FrameLayout(activity);
         parent.addView(content,new FrameLayout.LayoutParams(-1,-1));
-        FrameLayout overlay=new FrameLayout(activity);
+        DrawerOverlay overlay=new DrawerOverlay(activity);
         overlay.setVisibility(View.GONE);
         parent.addView(overlay,new FrameLayout.LayoutParams(-1,-1));
         Sidebar menu=new Sidebar(activity,overlay,page);
+        overlay.dismiss=menu::close;
         menu.setup();
         activity.setContentView(parent);
         return menu;
@@ -50,17 +92,13 @@ final class Sidebar {
         sheet.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
         sheet.setPadding(dp(14),dp(21),dp(14),dp(15));
         sheet.setBackgroundColor(CARD);
-        FrameLayout.LayoutParams frame=new FrameLayout.LayoutParams(dp(295),-1,Gravity.LEFT);
+        FrameLayout.LayoutParams frame=new FrameLayout.LayoutParams(dp(295),-1,Gravity.RIGHT);
         overlay.addView(sheet,frame);
         TextView brand=new TextView(activity);
         brand.setText("MT_TOOLS");brand.setTextColor(WHITE);brand.setTextSize(27);
         brand.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
         brand.setPadding(dp(13),dp(14),dp(13),dp(12));
         sheet.addView(brand);
-        TextView sub=new TextView(activity);
-        sub.setText("صندوق أدوات فني الشبكات");
-        sub.setTextColor(MUTED);sub.setTextSize(13);sub.setPadding(dp(13),0,dp(13),dp(15));
-        sheet.addView(sub);
         View line=new View(activity);line.setBackgroundColor(BORDER);
         sheet.addView(line,new LinearLayout.LayoutParams(-1,dp(1)));
         ScrollView scroll=new ScrollView(activity);
