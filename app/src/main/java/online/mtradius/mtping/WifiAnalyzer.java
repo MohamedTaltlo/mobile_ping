@@ -118,6 +118,7 @@ final class WifiAnalyzer {
         out.append("الشبكات المرصودة على ").append(current.band).append(": ").append(considered);
         out.append("\nالقناة الحالية: ").append(current.channel);
         out.append("\nالقناة الأقل ازدحاماً وفق الإشارات المكتشفة: ").append(best);
+        out.append("  •  ").append(is24?2407+5*best:5000+5*best).append(" MHz");
         if(best==current.channel)out.append(" (أنت عليها حالياً)");
         else out.append(" (يمكن تجربتها في إعدادات الراوتر)");
         if(is24)out.append("\nيفضل عرض قناة 20 MHz على نطاق 2.4 GHz.");
