@@ -1,5 +1,19 @@
 plugins { id 'com.android.application' }
 
+// Do NOT commit a signing key to this public repository.
+// When configured, GitHub Actions injects this long-term key from repository secrets.
+// All subsequent APKs then have the same Android signing certificate.
+def signingEncoded = System.getenv('MT_TOOLS_KEYSTORE_BASE64')
+def signingPassword = System.getenv('MT_TOOLS_KEYSTORE_PASSWORD')
+def stableSigning = signingEncoded != null && !signingEncoded.trim().isEmpty() &&
+        signingPassword != null && !signingPassword.isEmpty()
+def stableKeystore = file("$buildDir/mt-tools-upload.jks")
+if (stableSigning) {
+    stableKeystore.parentFile.mkdirs()
+    stableKeystore.bytes = java.util.Base64.getMimeDecoder().decode(signingEncoded.trim())
+}
+
+
 android {
     namespace 'online.mtradius.mtping'
     compileSdk 35
@@ -8,8 +22,8 @@ android {
         applicationId 'online.mtradius.mtping'
         minSdk 26
         targetSdk 35
-        versionCode 11
-        versionName '2.1.3'
+        versionCode 12
+        versionName '3.0.0'
     }
 
     // Native Nmap must be extracted to an executable directory on Android 10+.
@@ -17,7 +31,23 @@ android {
 
     testOptions { unitTests.returnDefaultValues = true }
 
+    signingConfigs {
+        if (stableSigning) {
+            permanent {
+                storeFile stableKeystore
+                storePassword signingPassword
+                keyAlias 'mttools'
+                keyPassword signingPassword
+            }
+        }
+    }
+
     buildTypes {
+        debug {
+            // Release APK is named MT_TOOLS.apk even though it uses debug variant.
+            // The key is persistent only once both GitHub Actions secrets exist.
+            if (stableSigning) signingConfig signingConfigs.permanent
+        }
         release { minifyEnabled false }
     }
 

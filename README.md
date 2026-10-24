@@ -4,7 +4,30 @@ Native Android ICMP monitoring app, inspired by Termux ping output. Foreground b
 
 **Android:** 8.0+ · **Target:** Android 15 · **Build:** GitHub Actions `Android APK` produces `MT_TOOLS.apk` in GitHub Releases and workflow artifacts.
 
-See the source and [build workflow](.github/workflows/android.yml). The APK is a debug-signed sideload build; it is not a Play Store release.
+See the [build workflow](.github/workflows/android.yml). The APK is sideloaded outside Google Play.
+Without permanent signing secrets, the workflow produces a debug-signed APK that cannot update a differently-signed installation.
+
+## الإصدار 3.0.0
+
+- إصلاح ترتيب العربية والأرقام ووحدات MHz وGHz وdBm في صفحة الشبكة.
+- نتيجة تحليل الترددات أصبحت ثلاثة أسطر فقط، بدون التنبيهات والعبارات الإضافية.
+- على 5 GHz: إظهار «التردد الحالي لا يحتاج إلى تغيير» دائماً وفق سياسة التطبيق المطلوبة، دون طلب فحص تردد جديد.
+- على 2.4 GHz: مقارنة التداخل عبر القنوات الإحدى عشرة 1–11 مع اعتبار شبكات 20 و40 MHz والتداخل بين القنوات المجاورة؛ تفضيل 1 و6 و11 عند تقارب النتائج.
+- عند عدم وجود تحسّن كافٍ: إبقاء التردد الحالي.
+- إصدار 3.0.0 مع رقم بناء Android أعلى، وإعداد توقيع اختياري طويل الأمد (أسرار GitHub Actions).
+
+### إعداد توقيع APK ثابت للتحديث فوق الإصدارات السابقة
+
+النسخ القديمة كانت بتوقيع debug مؤقت؛ مفتاح التوقيع السابق لم يُحفَظ، ولذلك قد تحتاج **مرة أخيرة** لإزالة النسخة القديمة عند الانتقال إلى النسخة ذات التوقيع الدائم.
+بعد إنشاء المفتاح الآمن وحفظه في GitHub Actions Secrets سيصبح مفتاح جميع النسخ القادمة واحداً، ويمكن تحديث التطبيق من دون حذف الإصدار السابق.
+لا تضع ملف keystore أو كلمة مروره في المستودع العام.
+
+1. نفّذ محلياً `bash scripts/setup-stable-signing.sh` على جهاز تثق فيه ولديه Java keytool (يستخدم GitHub CLI إن توفر).
+2. احفظ نسخة احتياطية خاصة من `~/.mttools-signing/mttools.jks` وكلمة مروره.
+3. تأكد من وجود السرَّين `MT_TOOLS_KEYSTORE_BASE64` و`MT_TOOLS_KEYSTORE_PASSWORD` في GitHub Repository Settings > Secrets and variables > Actions.
+4. أعد تشغيل GitHub Actions لبناء APK بالمفتاح الجديد. افحص شهادة APK المنشورة وتحقق من أنها لا تتغير بالإصدارات اللاحقة.
+
+إذا لم تضبط السرَّين، GitHub يبني نسخة Debug جديدة **ولا تُحل مشكلة التثبيت فوق النسخة القديمة**.
 
 ## الإصدار 2.1.3
 

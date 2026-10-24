@@ -4,8 +4,6 @@ import android.content.Context;
 import android.net.wifi.ScanResult;
 import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiManager;
-import android.os.SystemClock;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
@@ -15,6 +13,10 @@ import java.util.Locale;
  */
 final class WifiAnalyzer {
     private WifiAnalyzer() { }
+    /** LTR numeric runs isolated inside Arabic lines. */
+    private static String ltr(String value) {
+        return "\u2066" + value + "\u2069";
+    }
 
     static final class Current {
         final String name;
@@ -24,14 +26,16 @@ final class WifiAnalyzer {
             name=n;frequency=f;channel=c;rssi=r;linkSpeed=speed;band=b;
         }
         String describe(){
-            if(frequency<=0)return "لا تتوفر معلومات التردد؛ تأكد من اتصال Wi-Fi.";
+            if(frequency<=0)return "لا تتوفر معلومات الاتصال بشبكة Wi-Fi.";
             StringBuilder b=new StringBuilder("اسم الشبكة: ");
-            b.append("\u2066").append(name).append("\u2069");
-            b.append("\nالنطاق: ").append(band);
-            b.append("\nالتردد الحالي: ").append(frequency).append(" MHz");
-            b.append("\nالقناة الحالية: ").append(channel);
-            if(rssi>=-120 && rssi<0)b.append("\nقوة الإشارة: ").append(rssi).append(" dBm");
-            if(linkSpeed>0)b.append("\nسرعة ارتباط Wi-Fi: ").append(linkSpeed).append(" Mbps");
+            b.append(ltr(name));
+            b.append("\nالنطاق: ").append(ltr(band));
+            b.append("\nالتردد الحالي: ").append(ltr(frequency+" MHz"));
+            b.append("\nالقناة الحالية: ").append(ltr(Integer.toString(channel)));
+            if(rssi>=-120 && rssi<0)
+                b.append("\nقوة الإشارة: ").append(ltr(rssi+" dBm"));
+            if(linkSpeed>0)
+                b.append("\nسرعة ارتباط Wi-Fi: ").append(ltr(linkSpeed+" Mbps"));
             return b.toString();
         }
     }
@@ -68,63 +72,92 @@ final class WifiAnalyzer {
         Advice(String text,int total){label=text;detected=total;}
     }
 
-    static Advice recommend(Context ctx,Current current) {
-        if(current.frequency<=0)return new Advice(
-                "اتصل بشبكة Wi-Fi أولاً حتى نحدد النطاق والتردد.",0);
-        WifiManager mgr=(WifiManager)ctx.getApplicationContext().getSystemService(Context.WIFI_SERVICE);
-        if(mgr==null)return new Advice("خدمة Wi-Fi غير متاحة.",0);
-        List<ScanResult> list;
-        try {list=mgr.getScanResults();}
-        catch(SecurityException e){return new Advice("يجب السماح بإذن الموقع وتشغيل خدمات الموقع لفحص الترددات.",0);}
-        if(list==null||list.isEmpty())
-            return new Advice("لم تُرجع الشبكة أي نقاط وصول قريبة. لا يمكن اقتراح قناة موثوقة.",0);
-
-        boolean is24=current.frequency>=2400 && current.frequency<2500;
-        boolean is5=current.frequency>=4900 && current.frequency<5925;
-        if(!is24&&!is5)
-            return new Advice("يظهر النطاق الحالي في الأعلى. اقتراح القناة متاح حالياً لنطاقَي 2.4 و5 GHz.",list.size());
-
-        final int[] candidates;
-        if(is24)candidates=new int[]{1,6,11};
-        else candidates=new int[]{36,40,44,48,149,153,157,161};
-
-        int best=-1;double lowest=Double.POSITIVE_INFINITY;
-        int considered=0;
-        for(int c:candidates){
-            int center=is24?2407+5*c:5000+5*c;
-            double score=0;
-            int found=0;
-            for(ScanResult ap:list){
-                if(ap==null || ap.frequency==0)continue;
-                if(is24&&(ap.frequency<2400||ap.frequency>2500))continue;
-                if(is5&&(ap.frequency<4900||ap.frequency>5925))continue;
-                found++;
-                // Better overlap estimation: wide 5GHz radios can occupy +/-40 MHz.
-                double footprint=is24?25:40;
-                double overlap=Math.max(0,1-Math.abs(ap.frequency-center)/footprint);
-                if(overlap>0){
-                    // Stronger APs count more. Do not infer actual traffic/load from RSSI.
-                    double strength=Math.max(1,Math.min(100,100+ap.level));
-                    score+=strength*overlap;
-                }
+    /**
+     * Approximate local 2.4GHz interference from received AP beacons.
+     * ScanResult.channelWidth distinguishes 20 and 40MHz neighbors;
+     * never treat 11 overlapping primary channels as non-overlapping.
+     */
+    private static double score24(List<ScanResult> stations,int frequency) {
+        double score=0;
+        for(ScanResult ap:stations){
+            if(ap==null || ap.frequency<2400 || ap.frequency>=2500)continue;
+            int halfWidth=ap.channelWidth==ScanResult.CHANNEL_WIDTH_40MHZ?20:10;
+            int actualCenter=(halfWidth==20 && ap.centerFreq0>0)
+                    ?ap.centerFreq0:ap.frequency;
+            double distance=Math.abs(actualCenter-frequency);
+            double overlap=Math.max(0,1-distance/(halfWidth+10.0));
+            if(overlap>0) {
+                double strength=Math.max(1,Math.min(100,100+ap.level));
+                score+=strength*overlap;
             }
-            considered=Math.max(considered,found);
-            if(score<lowest){lowest=score;best=c;}
         }
-        if(considered==0)return new Advice(
-                "لم يتم رصد شبكات على نطاق "+current.band+"؛ لا توجد بيانات كافية لاقتراح قناة.",list.size());
+        return score;
+    }
 
+    static Advice recommend(Context ctx,Current current) {
+        if(current.frequency<=0)
+            return new Advice("اتصل بشبكة Wi-Fi أولاً.",0);
+        final boolean is24=current.frequency>=2400 && current.frequency<2500;
+        final boolean is5=current.frequency>=4900 && current.frequency<5925;
+        if(!is24 && !is5)
+            return new Advice("تحليل القنوات متاح لنطاقَي 2.4 و5 GHz.",0);
+
+        WifiManager manager=(WifiManager)ctx.getApplicationContext()
+                .getSystemService(Context.WIFI_SERVICE);
+        List<ScanResult> list=null;
+        try {
+            if(manager!=null)list=manager.getScanResults();
+        } catch(SecurityException ignored) {
+            // Current 5GHz needs no scan to say keep the same channel.
+        }
+
+        int seen=0;
+        if(list!=null){
+            for(ScanResult ap:list){
+                if(ap==null)continue;
+                if(is24 && ap.frequency>=2400 && ap.frequency<2500)seen++;
+                if(is5 && ap.frequency>=4900 && ap.frequency<5925)seen++;
+            }
+        }
         StringBuilder out=new StringBuilder();
-        out.append("الشبكات المرصودة على ").append(current.band).append(": ").append(considered);
-        out.append("\nالقناة الحالية: ").append(current.channel);
-        out.append("\nالقناة الأقل ازدحاماً وفق الإشارات المكتشفة: ").append(best);
-        out.append("  •  ").append(is24?2407+5*best:5000+5*best).append(" MHz");
-        if(best==current.channel)out.append(" (أنت عليها حالياً)");
-        else out.append(" (يمكن تجربتها في إعدادات الراوتر)");
-        if(is24)out.append("\nيفضل عرض قناة 20 MHz على نطاق 2.4 GHz.");
-        else out.append("\nالنتيجة تقريبية وتعتمد على عرض القناة والتداخل من الشبكات المحيطة.");
-        out.append("\nتنبيه: استعمل فقط القنوات المسموحة في بلدك والمدعومة من الراوتر.");
-        out.append("\nالتوصية مبنية على قوة إشارات Wi-Fi، وليس ازدحام البيانات أو قياس طيف RF.");
-        return new Advice(out.toString(),list.size());
+        out.append("الشبكات المرصودة على ").append(ltr(current.band))
+                .append(": ").append(ltr(list==null?"—":Integer.toString(seen)));
+        out.append("\nالقناة الحالية: ").append(ltr(Integer.toString(current.channel)));
+
+        if(is5) {
+            // Product choice: 5GHz typically uses 80MHz; the recommended four
+            // primary channels 36/40/44/48 share one 80MHz RF block.
+            // Display "no change" unconditionally as requested.
+            out.append("\nالتردد الحالي لا يحتاج إلى تغيير");
+            return new Advice(out.toString(),seen);
+        }
+
+        if(list==null || seen==0){
+            out.append("\nلا توجد بيانات كافية لاقتراح قناة.");
+            return new Advice(out.toString(),seen);
+        }
+
+        // 2.4GHz has 11 commonly-supported primary channels. Evaluate all of
+        // them with 20/40MHz overlap, while preferring 1/6/11 in close cases.
+        int best=current.channel>=1 && current.channel<=11?current.channel:1;
+        double bestScore=Double.POSITIVE_INFINITY;
+        for(int channel=1;channel<=11;channel++){
+            int mhz=2407+5*channel;
+            double score=score24(list,mhz);
+            if(channel!=1 && channel!=6 && channel!=11)score+=8;
+            if(score<bestScore-0.00001){bestScore=score;best=channel;}
+        }
+        double currentScore=score24(list,current.frequency);
+        if(current.channel!=1 && current.channel!=6 && current.channel!=11)
+            currentScore+=8;
+        boolean keep=currentScore <= bestScore+Math.max(8,bestScore*.15);
+        if(keep) {
+            out.append("\nالتردد الحالي لا يحتاج إلى تغيير");
+        } else {
+            out.append("\nالقناة الأقل ازدحاماً: ")
+                    .append(ltr(Integer.toString(best)))
+                    .append("  •  ").append(ltr((2407+5*best)+" MHz"));
+        }
+        return new Advice(out.toString(),seen);
     }
 }

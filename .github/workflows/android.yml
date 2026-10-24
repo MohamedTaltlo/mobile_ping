@@ -73,8 +73,16 @@ jobs:
 
       - name: Compile Android and run JVM tests
         shell: bash
+        env:
+          MT_TOOLS_KEYSTORE_BASE64: ${{ secrets.MT_TOOLS_KEYSTORE_BASE64 }}
+          MT_TOOLS_KEYSTORE_PASSWORD: ${{ secrets.MT_TOOLS_KEYSTORE_PASSWORD }}
         run: |
-          set -euxo pipefail
+          set -euo pipefail
+          if [ -n "$MT_TOOLS_KEYSTORE_BASE64" ] && [ -n "$MT_TOOLS_KEYSTORE_PASSWORD" ]; then
+            echo "PERMANENT APK SIGNING: enabled (keystore from protected Actions secrets)"
+          else
+            echo "::warning::Permanent Android signing secrets NOT configured. Debug-signed APK requires uninstall when its certificate changes. Run scripts/setup-stable-signing.sh and configure Actions secrets."
+          fi
           gradle --no-daemon --stacktrace :app:assembleDebug :app:testDebugUnitTest
 
       - name: Check and name output
@@ -85,6 +93,7 @@ jobs:
           cp app/build/outputs/apk/debug/app-debug.apk MT_TOOLS.apk
           ls -lh MT_TOOLS.apk
           sha256sum MT_TOOLS.apk
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs MT_TOOLS.apk
 
       - name: Upload APK as workflow artifact
         uses: actions/upload-artifact@v4
@@ -97,21 +106,21 @@ jobs:
       - name: Publish MT_TOOLS release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v2.1.3
-          name: MT_TOOLS v2.1.3
+          tag_name: v3.0.0
+          name: MT_TOOLS v3.0.0
           target_commitish: ${{ github.sha }}
           body: |
-            **MT_TOOLS v2.1.3 — Sidebar جديدة وتحليل قنوات Wi-Fi**
+            **MT_TOOLS v3.0.0 — تحسين RTL وتحليل 5 GHz**
 
-            - زر القائمة على يمين الترويسة بكل صفحات التطبيق.
-            - القائمة اليمينية تنزلق بانيميشن عند الفتح والإغلاق وتتبع حركة الإصبع عند السحب يميناً.
-            - إصلاح اتجاه عرض عنوان IPv4 مع البادئة /24 في واجهة عربية RTL.
-            - إظهار اسم Wi-Fi المتصل والتردد والقناة ونطاق 2.4 أو 5 GHz وقوة الإشارة وسرعة الارتباط.
-            - تحليل الشبكات المرصودة لاقتراح قناة Wi-Fi أقل ازدحاماً بصورة تقريبية.
-            - إذن الموقع يُطلب فقط عند اختيار تحليل القنوات؛ يلزم تشغيل خدمات الموقع.
-            - استمرار جميع ميزات Ping وNmap وأدوات الشبكة السابقة.
-
-            القناة المقترحة تقديرية حسب بيانات Wi-Fi المكتشفة وليست قياساً للتداخل غير اللاسلكي أو حركة البيانات.
+            - ضبط القيم الرقمية وعلامات الوحدات وسط الأسطر العربية.
+            - التحليل يعتمد القنوات الأربع الأكثر توافقاً في نطاق 5 GHz: 36، 40، 44، 48.
+            - إظهار ثلاثة أسطر مختصرة لعدد الشبكات والقناة الحالية والتوصية.
+            - عندما يكون أداء القناة الحالية مماثلاً أو أفضل، يعرض «التردد الحالي لا يحتاج إلى تغيير».
+            - مراعاة عرض قناة 80 MHz: لا يقترح تغييراً شكلياً ضمن نفس كتلة التردد.
+            - إضافة آلية توقيع Android دائمة من GitHub Actions Secrets، لحل الحاجة لحذف التطبيق عند التحديث بعد ضبط السرَّين.
+            - سكربت إعداد محلي لمفتاح التوقيع: scripts/setup-stable-signing.sh.
+            - لا ترفع مفتاح التوقيع السري إلى المستودع العام.
+            - الإصدار المبني من دون الأسرار سيظل بتوقيع Debug متغيّر، ولا يمكنه تحديث نسخة سابقة بتوقيع مختلف.
           files: MT_TOOLS.apk
           fail_on_unmatched_files: true
           overwrite_files: true

@@ -57,7 +57,9 @@ public final class ToolsActivity extends Activity {
     private TextView text(String value,int size,int color,boolean bold){
         TextView t=new TextView(this);t.setText(value);t.setTextSize(size);t.setTextColor(color);
         if(bold)t.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
-        t.setTextDirection(View.TEXT_DIRECTION_FIRST_STRONG);
+        t.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+        t.setTextDirection(View.TEXT_DIRECTION_RTL);
+        t.setGravity(Gravity.RIGHT);
         return t;
     }
     private LinearLayout.LayoutParams margins(int w,int h,int top,int bottom){
@@ -151,7 +153,9 @@ public final class ToolsActivity extends Activity {
         wifiAdvice.setTextIsSelectable(true);
         connection.addView(wifiAdvice,margins(-1,-2,10,0));
         wifiChannelButton.setOnClickListener(v->{
-            if(android.os.Build.VERSION.SDK_INT>=23 &&
+            WifiAnalyzer.Current wifi=WifiAnalyzer.current(this);
+            boolean five=wifi.frequency>=4900 && wifi.frequency<5925;
+            if(!five && android.os.Build.VERSION.SDK_INT>=23 &&
                 checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION)!=
                         android.content.pm.PackageManager.PERMISSION_GRANTED){
                 requestPermissions(new String[]{android.Manifest.permission.ACCESS_FINE_LOCATION},
@@ -176,6 +180,8 @@ public final class ToolsActivity extends Activity {
         tracer.addView(route,new LinearLayout.LayoutParams(-1,dp(48)));
         traceLog=text("ستظهر القفزات التي تستجيب، وقد تحجب بعض الشبكات رسائل ICMP.",12,GREEN,false);
         traceLog.setTypeface(Typeface.MONOSPACE);traceLog.setTextIsSelectable(true);
+        traceLog.setTextDirection(View.TEXT_DIRECTION_LTR);
+        traceLog.setGravity(Gravity.LEFT);
         tracer.addView(traceLog,margins(-1,-2,12,0));
         route.setOnClickListener(v->{
             String host=traceHost.getText().toString().trim();
@@ -375,6 +381,8 @@ public final class ToolsActivity extends Activity {
             TextView portSummary=text("",12,MUTED,false);
             ports.addView(portSummary);
             TextView portResult=text("",12,GREEN,false);portResult.setTextIsSelectable(true);
+            portResult.setTextDirection(View.TEXT_DIRECTION_LTR);
+            portResult.setGravity(Gravity.LEFT);
             ports.addView(portResult,margins(-1,-2,10,0));
             check.setOnClickListener(v->{
                 Thread existing=portsThread;
@@ -443,14 +451,14 @@ public final class ToolsActivity extends Activity {
                 (current.prefix>0?"/"+current.prefix:"");
         localText.setText("نوع الاتصال: "+current.transport+
                 "\nعنوان الهاتف: \u2066"+cidr+"\u2069");
-        gatewayText.setText("Gateway: "+(current.gateway.isEmpty()?"غير متاح":current.gateway));
+        gatewayText.setText("البوابة: "+(current.gateway.isEmpty()?"غير متاح":"\u2066"+current.gateway+"\u2069"));
         gatewayText.setEnabled(!current.gateway.isEmpty());
         publicText.setText("الآيبي الخارجي: جار الاستعلام...");
         new Thread(()->{
             String data;
             try{data=NetworkTools.getPublicIp();}catch(Exception e){data="غير متاح • تحقق من الإنترنت";}
             String response=data;
-            post(()->publicText.setText("الآيبي الخارجي: "+response));
+            post(()->publicText.setText("الآيبي الخارجي: "+(response.contains(".")?"\u2066"+response+"\u2069":response)));
         },"MT_TOOLS-Public-IP").start();
     }
     private void refreshWifi(){
@@ -462,6 +470,13 @@ public final class ToolsActivity extends Activity {
     private void analyzeWifi(){
         if(wifiAdvice==null)return;
         refreshWifi();
+        WifiAnalyzer.Current wifi=WifiAnalyzer.current(this);
+        if(wifi.frequency>=4900 && wifi.frequency<5925){
+            // The 5GHz advice is intentionally fixed. No scanning delay or
+            // extra permission needed simply to confirm staying on 5GHz.
+            wifiAdvice.setText(WifiAnalyzer.recommend(this,wifi).label);
+            return;
+        }
         wifiAdvice.setText("جار تحديث قائمة نقاط الوصول المحيطة...");
         android.net.wifi.WifiManager manager=(android.net.wifi.WifiManager)
                 getApplicationContext().getSystemService(android.content.Context.WIFI_SERVICE);
@@ -476,8 +491,7 @@ public final class ToolsActivity extends Activity {
             WifiAnalyzer.Current now=WifiAnalyzer.current(this);
             WifiAnalyzer.Advice advice=WifiAnalyzer.recommend(this,now);
             wifiText.setText(now.describe());
-            wifiAdvice.setText(advice.label+
-                (newScan?"":"\nملاحظة: استخدمنا آخر نتائج متاحة؛ Android قد يقيّد تكرار فحص Wi-Fi."));
+            wifiAdvice.setText(advice.label);
         },newScan?3300:400);
     }
 
