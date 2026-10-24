@@ -232,17 +232,26 @@ public final class MainActivity extends Activity {
         TextView intervalHelp = txt("الفاصل بين النبضات بالمللي ثانية (200 إلى 60000) • الافتراضي 1000", 10, MUTED, false);
         target.addView(intervalHelp, margin(-1, -2, 8, 0));
         target.addView(txt("عناوين جاهزة", 10, MUTED, true), margin(-1, -2, 13, 7));
+        // Independent, evenly spaced address chips. Use symmetric margins so
+        // none of the rounded corners touch in either RTL or LTR layouts.
         LinearLayout presets = horizontal();
+        presets.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
         String[] defaultTargets = {"10.0.0.1", "8.8.8.8", "www.google.com"};
         for (int i = 0; i < defaultTargets.length; i++) {
             final String item = defaultTargets[i];
-            TextView option = txt(item, 11, GREEN, true);
+            TextView option = txt(item, i == 2 ? 11 : 12, GREEN, true);
             option.setSingleLine(true);
+            option.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            option.setTextDirection(View.TEXT_DIRECTION_LTR);
+            option.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
             option.setGravity(Gravity.CENTER);
-            option.setPadding(dp(5), dp(11), dp(5), dp(11));
-            option.setBackground(shape(0xFF173245, BORDER, 9));
-            LinearLayout.LayoutParams pp = new LinearLayout.LayoutParams(0, -2, i == 2 ? 1.65f : 1);
-            if (i > 0) pp.leftMargin = dp(7);
+            option.setPadding(dp(5), 0, dp(5), 0);
+            option.setBackground(shape(0xFF173245, BORDER, 12));
+            option.setMinimumHeight(dp(49));
+            LinearLayout.LayoutParams pp = new LinearLayout.LayoutParams(
+                    0, dp(49), i == 2 ? 1.75f : 1.05f);
+            pp.leftMargin = dp(5);
+            pp.rightMargin = dp(5);
             presets.addView(option, pp);
             option.setOnClickListener(v -> {
                 if (PingState.INSTANCE.snapshot().running) {

@@ -87,7 +87,7 @@ final class PortScanner {
         final long timeoutNs=350_000_000L;
         int next=1,done=0,found=0;
         int lastReported=0;
-        listener.message("جار فحص TCP سريع (بديل Nmap) للعنوان "+target.getHostAddress());
+        listener.message("جار فحص منافذ TCP للعنوان "+target.getHostAddress());
         try(Selector selector=Selector.open()){
             while((next<=65535||!selector.keys().isEmpty())&&!stop.isCancelled()){
                 while(next<=65535 && selector.keys().size()<maxInflight && !stop.isCancelled()){

@@ -1,6 +1,13 @@
 package online.mtradius.mtping;
 
 import android.app.Activity;
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.IntentFilter;
+import android.net.wifi.WifiManager;
+import android.location.LocationManager;
+import android.os.Handler;
+import android.os.Looper;
 import android.content.Intent;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
@@ -32,6 +39,10 @@ public final class ToolsActivity extends Activity {
     private TextView localText, gatewayText, publicText, traceLog, scanLog, ubntLog;
     private TextView wifiText, wifiAdvice;
     private static final int WIFI_LOCATION_REQUEST = 231;
+    private final Handler wifiHandler = new Handler(Looper.getMainLooper());
+    private BroadcastReceiver wifiReceiver;
+    private Runnable wifiFallback;
+    private int wifiScanGeneration = 0;
     private LinearLayout lanResults, ubntResults;
     private EditText traceHost;
     private volatile boolean closed;
@@ -153,9 +164,9 @@ public final class ToolsActivity extends Activity {
         wifiAdvice.setTextIsSelectable(true);
         connection.addView(wifiAdvice,margins(-1,-2,10,0));
         wifiChannelButton.setOnClickListener(v->{
-            WifiAnalyzer.Current wifi=WifiAnalyzer.current(this);
-            boolean five=wifi.frequency>=4900 && wifi.frequency<5925;
-            if(!five && android.os.Build.VERSION.SDK_INT>=23 &&
+            // Always obtain location permission for a real AP survey on both
+            // 2.4 and 5 GHz. The 5 GHz channel recommendation remains fixed.
+            if(Build.VERSION.SDK_INT>=23 &&
                 checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION)!=
                         android.content.pm.PackageManager.PERMISSION_GRANTED){
                 requestPermissions(new String[]{android.Manifest.permission.ACCESS_FINE_LOCATION},
@@ -364,14 +375,14 @@ public final class ToolsActivity extends Activity {
                 },"MT_TOOLS-DNS").start();
             });
 
-            LinearLayout ports=card(root,"Nmap • فحص المنافذ المفتوحة");
+            LinearLayout ports=card(root,"فحص المنافذ المفتوحة");
     
             EditText portHost=new EditText(this);portHost.setSingleLine(true);portHost.setText("192.168.1.1");
             portHost.setTextColor(WHITE);portHost.setBackground(surface(BG,BORDER,12));
             portHost.setTextDirection(View.TEXT_DIRECTION_LTR);
             portHost.setPadding(dp(12),dp(10),dp(12),dp(10));
             ports.addView(portHost,margins(-1,dp(48),9,9));
-            Button check=button("بدء Nmap • جميع منافذ TCP",0xFF173245);
+            Button check=button("فحص جميع منافذ TCP",0xFF173245);
             ports.addView(check,new LinearLayout.LayoutParams(-1,dp(53)));
             ProgressBar portsProgress=new ProgressBar(this,null,android.R.attr.progressBarStyleHorizontal);
             portsProgress.setMax(65535);
@@ -467,32 +478,77 @@ public final class ToolsActivity extends Activity {
         wifiText.setText(now.describe());
     }
 
+    private boolean isLocationServiceEnabled(){
+        LocationManager lm=(LocationManager)getSystemService(Context.LOCATION_SERVICE);
+        if(lm==null)return false;
+        try{
+            if(Build.VERSION.SDK_INT>=28)return lm.isLocationEnabled();
+            return lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER) ||
+                    lm.isProviderEnabled(LocationManager.GPS_PROVIDER);
+        }catch(Exception ignored){return false;}
+    }
+
+    private void finishWifiScan(int generation,boolean fresh){
+        if(generation!=wifiScanGeneration || closed || wifiAdvice==null)return;
+        releaseWifiReceiver();
+        refreshWifi();
+        WifiAnalyzer.Current now=WifiAnalyzer.current(this);
+        WifiAnalyzer.Advice advice=WifiAnalyzer.recommend(this,now);
+        wifiAdvice.setText(advice.label);
+    }
+
+    private void releaseWifiReceiver(){
+        if(wifiReceiver!=null){
+            try{unregisterReceiver(wifiReceiver);}catch(Exception ignored){}
+            wifiReceiver=null;
+        }
+        if(wifiFallback!=null){
+            wifiHandler.removeCallbacks(wifiFallback);
+            wifiFallback=null;
+        }
+    }
+
     private void analyzeWifi(){
         if(wifiAdvice==null)return;
         refreshWifi();
-        WifiAnalyzer.Current wifi=WifiAnalyzer.current(this);
-        if(wifi.frequency>=4900 && wifi.frequency<5925){
-            // The 5GHz advice is intentionally fixed. No scanning delay or
-            // extra permission needed simply to confirm staying on 5GHz.
-            wifiAdvice.setText(WifiAnalyzer.recommend(this,wifi).label);
+        if(!isLocationServiceEnabled()){
+            wifiAdvice.setText("لتعداد الشبكات القريبة، يرجى تشغيل خدمات الموقع ثم إعادة الفحص.");
             return;
         }
-        wifiAdvice.setText("جار تحديث قائمة نقاط الوصول المحيطة...");
-        android.net.wifi.WifiManager manager=(android.net.wifi.WifiManager)
-                getApplicationContext().getSystemService(android.content.Context.WIFI_SERVICE);
-        boolean requested=false;
-        if(manager!=null){
-            try{requested=manager.startScan();}
-            catch(Exception ignored){}
+        final WifiManager manager=(WifiManager)getApplicationContext()
+                .getSystemService(Context.WIFI_SERVICE);
+        if(manager==null || !manager.isWifiEnabled()){
+            wifiAdvice.setText("شبكة Wi-Fi غير مفعّلة.");
+            return;
         }
-        final boolean newScan=requested;
-        new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(()->{
-            if(closed || wifiAdvice==null)return;
-            WifiAnalyzer.Current now=WifiAnalyzer.current(this);
-            WifiAnalyzer.Advice advice=WifiAnalyzer.recommend(this,now);
-            wifiText.setText(now.describe());
-            wifiAdvice.setText(advice.label);
-        },newScan?3300:400);
+        releaseWifiReceiver();
+        final int request=++wifiScanGeneration;
+        wifiAdvice.setText("جار فحص شبكات Wi-Fi القريبة...");
+        wifiReceiver=new BroadcastReceiver(){
+            @Override public void onReceive(Context context,Intent intent){
+                if(!WifiManager.SCAN_RESULTS_AVAILABLE_ACTION.equals(intent.getAction()))return;
+                finishWifiScan(request,intent.getBooleanExtra(
+                        WifiManager.EXTRA_RESULTS_UPDATED,false));
+            }
+        };
+        try{
+            IntentFilter filter=new IntentFilter(WifiManager.SCAN_RESULTS_AVAILABLE_ACTION);
+            if(Build.VERSION.SDK_INT>=33)
+                registerReceiver(wifiReceiver,filter,Context.RECEIVER_NOT_EXPORTED);
+            else registerReceiver(wifiReceiver,filter);
+        }catch(Exception ignored){
+            wifiReceiver=null;
+        }
+        boolean started=false;
+        try{started=manager.startScan();}catch(Exception ignored){}
+        if(!started){
+            // Android throttles scans. Read the latest cached results if present,
+            // but never label an unavailable result as zero detected networks.
+            finishWifiScan(request,false);
+        }else{
+            wifiFallback=()->finishWifiScan(request,false);
+            wifiHandler.postDelayed(wifiFallback,6500);
+        }
     }
 
     @Override public void onRequestPermissionsResult(int requestCode,String[] permissions,int[] results){
@@ -512,6 +568,7 @@ public final class ToolsActivity extends Activity {
         super.onBackPressed();
     }
     @Override protected void onDestroy(){
+        releaseWifiReceiver();
         closed=true;generation++;
         scanGeneration.incrementAndGet();
         Thread scanning=scanThread;if(scanning!=null)scanning.interrupt();

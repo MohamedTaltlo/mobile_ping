@@ -7,6 +7,15 @@ Native Android ICMP monitoring app, inspired by Termux ping output. Foreground b
 See the [build workflow](.github/workflows/android.yml). The APK is sideloaded outside Google Play.
 Without permanent signing secrets, the workflow produces a debug-signed APK that cannot update a differently-signed installation.
 
+## الإصدار 3.1.1
+
+- تعديل تنسيق العناوين الثلاثة الجاهزة للبينغ ومنح كل زر عرضاً مناسباً ومسافات واضحة.
+- تحليل نقاط وصول Wi-Fi المجاورة يُجري Scan على النطاقين 2.4 و5 GHz، لا يتجاوز مسح 5 GHz بسبب قاعدة عدم تغيير التردد.
+- يحتاج فحص Wi-Fi إلى إذن الموقع وتشغيل خدمة الموقع وفق متطلبات Android؛ يستخدم نتائج المسح الفعلي عند اكتماله ويستفيد من النتائج المتاحة عند تقييد الفحص المتكرر.
+- إذا لم تتوفر نتائج المسح تظهر «—» بدلاً من قيمة 0 المضللة.
+- تظل توصية نطاق 5 GHz «التردد الحالي لا يحتاج إلى تغيير» مهما كان عدد الشبكات المرصودة.
+- إزالة كلمة Nmap من واجهة فحص المنافذ ورسائل نتائجها؛ محرك الفحص الأساسي والبديل كما كانا في الإصدار السابق.
+
 ## الإصدار 3.0.0
 
 - إصلاح ترتيب العربية والأرقام ووحدات MHz وGHz وdBm في صفحة الشبكة.

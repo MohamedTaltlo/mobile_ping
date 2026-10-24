@@ -36,7 +36,7 @@ final class NmapEngine {
             builder.environment().put("NMAPDIR",ctx.getFilesDir().getAbsolutePath());
             process=builder.start();
             stop.process=process;
-            output.message("فحص المنافذ باستخدام Nmap (TCP Connect)...");
+            output.message("جار فحص منافذ TCP المفتوحة...");
             Set<Integer> seen=new HashSet<>();
             try(BufferedReader reader=new BufferedReader(new InputStreamReader(process.getInputStream(),"UTF-8"))){
                 String line;
@@ -44,7 +44,7 @@ final class NmapEngine {
                     if(line.contains("Starting Nmap")||line.contains("Initiating Connect Scan"))gotReady=true;
                     if(line.toLowerCase(Locale.US).contains("failed to load")||
                        line.toLowerCase(Locale.US).contains("cannot open shared object")){
-                        output.message("تعذّر تحميل ملفات Nmap، جار التحويل لفحص TCP الداخلي.");
+                        output.message("تعذّر تحميل محرك الفحص، جار استخدام الطريقة البديلة.");
                         return false;
                     }
                     Matcher current=OPEN.matcher(line);
@@ -65,18 +65,18 @@ final class NmapEngine {
             if(stop.isCancelled())throw new InterruptedException();
             int exit=process.exitValue();
             if(exit!=0 && !gotReady){
-                output.message("Nmap غير متوافق مع هذا الجهاز؛ جار استخدام فاحص TCP السريع.");
+                output.message("محرك الفحص غير متوافق مع الجهاز؛ جار استخدام الفحص السريع.");
                 return false;
             }
             if(exit!=0){
-                output.message("Nmap أنهى العمل بخطأ، جار إكمال الفحص باستخدام TCP.");
+                output.message("توقف المحرك، جار استكمال فحص TCP.");
                 return false;
             }
             output.progress(65535,65535,seen.size());
-            output.message("اكتمل فحص Nmap: "+seen.size()+" منفذ TCP مفتوح.");
+            output.message("اكتمل فحص المنافذ: "+seen.size()+" منفذ TCP مفتوح.");
             return true;
         } catch(java.io.IOException e) {
-            output.message("تعذّر تشغيل Nmap على جهازك: "+e.getMessage());
+            output.message("تعذّر تشغيل محرك الفحص: "+e.getMessage());
             return false;
         } finally {
             if(process!=null && process.isAlive())process.destroyForcibly();

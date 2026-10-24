@@ -108,7 +108,7 @@ final class WifiAnalyzer {
         try {
             if(manager!=null)list=manager.getScanResults();
         } catch(SecurityException ignored) {
-            // Current 5GHz needs no scan to say keep the same channel.
+            // A missing permission is not a measured count of zero APs.
         }
 
         int seen=0;
@@ -121,7 +121,7 @@ final class WifiAnalyzer {
         }
         StringBuilder out=new StringBuilder();
         out.append("الشبكات المرصودة على ").append(ltr(current.band))
-                .append(": ").append(ltr(list==null?"—":Integer.toString(seen)));
+                .append(": ").append(ltr(list==null || list.isEmpty()?"—":Integer.toString(seen)));
         out.append("\nالقناة الحالية: ").append(ltr(Integer.toString(current.channel)));
 
         if(is5) {
