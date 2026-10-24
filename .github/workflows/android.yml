@@ -90,7 +90,7 @@ jobs:
             - استمرار مراقبة Ping وسجل الانقطاعات وUBNT Discovery دون تغيير.
 
             تنبيه: أداة اكتشاف الأجهزة تعرض فقط البيانات التي تقدمها الشبكة والأنظمة فعلياً.
-                    files: MT_TOOLS.apk
+          files: MT_TOOLS.apk
           fail_on_unmatched_files: true
           overwrite_files: true
         env:
