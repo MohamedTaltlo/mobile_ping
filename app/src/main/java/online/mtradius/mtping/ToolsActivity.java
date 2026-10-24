@@ -14,10 +14,15 @@ import android.view.WindowInsets;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
+import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Locale;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.net.Socket;
 
 /** Separate service technician page. Network scans run off the UI thread. */
 public final class ToolsActivity extends Activity {
@@ -30,6 +35,8 @@ public final class ToolsActivity extends Activity {
     private volatile int generation;
     private NetworkTools.Connection current;
     private final Map<String,TextView> ubntRows=new LinkedHashMap<>();
+    private final Map<String,TextView> scanRows=new LinkedHashMap<>();
+    private Sidebar sidebar;
 
     private int dp(float n){return Math.round(n*getResources().getDisplayMetrics().density);}
     private GradientDrawable surface(int color,int stroke,int radius){
@@ -69,7 +76,7 @@ public final class ToolsActivity extends Activity {
     private void openRouter(String ip){
         if(!ip.matches("(?:[0-9]{1,3}\\.){3}[0-9]{1,3}"))return;
         Intent browser=new Intent(Intent.ACTION_VIEW,Uri.parse("http://"+ip+"/"));
-        try{startActivity(browser);}catch(Exception e){log(scanLog,"تعذّر فتح المتصفح: "+e.getMessage());}
+        try{startActivity(browser);}catch(Exception e){android.widget.Toast.makeText(this,"تعذّر فتح المتصفح",android.widget.Toast.LENGTH_SHORT).show();}
     }
     @Override public void onCreate(Bundle saved){
         super.onCreate(saved);
@@ -84,17 +91,29 @@ public final class ToolsActivity extends Activity {
                 v.setPadding(0,t.top,0,b.bottom);return insets;
             });
         }
-        setContentView(scroll);
+        String page=getIntent().getStringExtra("page");
+        if(page==null || !java.util.Arrays.asList("network","scanner","trace","ubnt","diagnostics").contains(page))
+            page="network";
+        sidebar=Sidebar.attach(this,scroll,page);
         LinearLayout root=col();root.setPadding(dp(18),dp(16),dp(18),dp(24));
         root.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);scroll.addView(root);
 
         LinearLayout header=row();
-        TextView logo=text("MT_TOOLS",24,WHITE,true);header.addView(logo,new LinearLayout.LayoutParams(0,-2,1));
-        Button back=button("← بينغ",0xFF173245);header.addView(back,new LinearLayout.LayoutParams(dp(99),dp(43)));
-        back.setOnClickListener(v->finish());
+        TextView logo=text("MT_TOOLS",24,WHITE,true);
+        header.addView(logo,new LinearLayout.LayoutParams(0,-2,1));
+        Button menu=button("☰",0xFF173245);
+        menu.setTextColor(GREEN);menu.setTextSize(21);
+        header.addView(menu,new LinearLayout.LayoutParams(dp(54),dp(47)));
+        menu.setOnClickListener(v->sidebar.open());
         root.addView(header);
-        root.addView(text("أدوات الشبكة والصيانة",13,MUTED,false),margins(-1,-2,4,6));
+        final String section=page;
+        String heading="network".equals(page)?"معلومات الاتصال والراوتر":
+                "scanner".equals(page)?"اكتشاف الأجهزة على الشبكة":
+                "trace".equals(page)?"تتبّع المسار Traceroute":
+                "ubnt".equals(page)?"Ubiquiti Discovery":"اختبارات فني الصيانة";
+        root.addView(text(heading,17,GREEN,true),margins(-1,-2,13,7));
 
+        if(section.equals("network")) {
         LinearLayout connection=card(root,"عناوين الشبكة والراوتر");
         localText=text("عنوان الهاتف: —",14,WHITE,false);
         gatewayText=text("البوابة Gateway: —",14,GREEN,true);
@@ -111,6 +130,8 @@ public final class ToolsActivity extends Activity {
         refresh.setOnClickListener(v->refreshConnection());
         refreshConnection();
 
+        }
+        if(section.equals("trace")) {
         LinearLayout tracer=card(root,"Traceroute • تتبّع المسار");
         tracer.addView(text("وجهة الفحص (IP أو دومين)",11,MUTED,false));
         traceHost=new EditText(this);
@@ -139,28 +160,78 @@ public final class ToolsActivity extends Activity {
             },"MT_TOOLS-trace").start();
         });
 
-        LinearLayout scan=card(root,"الأجهزة المتصلة على الشبكة المحلية");
-        scan.addView(text("فحص IPv4 على Wi-Fi الحالي (بحد أقصى /24). الأجهزة التي لا تجيب على Ping قد لا تظهر.",11,MUTED,false));
-        Button scanButton=button("فحص الأجهزة الآن",0xFF173245);
-        scan.addView(scanButton,margins(-1,dp(48),10,0));
-        scanLog=text("",12,MUTED,false);scan.addView(scanLog,margins(-1,-2,8,0));
-        lanResults=col();scan.addView(lanResults);
+        }
+        if(section.equals("scanner")) {
+        LinearLayout scan=card(root,"فحص الأجهزة المحلية");
+        scan.addView(text("يعمل الكشف تلقائياً بواسطة Ping وTCP وNetBIOS وUPnP وARP/Netlink دون الحاجة إلى أي إعدادات.",11,MUTED,false));
+        scan.addView(text("يظهر الراوتر والهاتف مباشرة. بقية الأجهزة تُضاف وتُحدّث أثناء الفحص.",11,MUTED,false),
+                     margins(-1,-2,7,0));
+        Button scanButton=button("بدء كشف الأجهزة",0xFF173245);
+        scan.addView(scanButton,margins(-1,dp(50),12,0));
+        ProgressBar scanProgress=new ProgressBar(this,null,android.R.attr.progressBarStyleHorizontal);
+        scanProgress.setMax(100);scanProgress.setProgressTintList(android.content.res.ColorStateList.valueOf(GREEN));
+        scanProgress.setVisibility(View.GONE);
+        scan.addView(scanProgress,margins(-1,dp(7),11,2));
+        scanLog=text("جاهز للفحص",13,MUTED,false);
+        scan.addView(scanLog,margins(-1,-2,8,10));
+        lanResults=col();
+        scan.addView(lanResults);
         scanButton.setOnClickListener(v->{
-            current=NetworkTools.connection(this);
-            scanButton.setEnabled(false);scanLog.setText("");lanResults.removeAllViews();
+            final NetworkTools.Connection net=NetworkTools.connection(this);
+            scanButton.setEnabled(false);scanButton.setText("جاري اكتشاف الأجهزة...");
+            scanProgress.setVisibility(View.VISIBLE);scanProgress.setProgress(0);
+            scanLog.setText("تحضير الفحص...");lanResults.removeAllViews();scanRows.clear();
             new Thread(()->{
                 try{
-                    NetworkTools.scanLan(current,line->log(scanLog,line),(ip,mac)->post(()->{
-                        TextView row=text("●  "+ip+"   •   MAC: "+mac+"\nاضغط لفتح http://"+ip,13,GREEN,false);
-                        row.setPadding(dp(8),dp(10),dp(8),dp(10));
-                        row.setBackground(surface(BG,BORDER,9));
-                        lanResults.addView(row,margins(-1,-2,4,0));row.setOnClickListener(z->openRouter(ip));
-                    }));
-                }catch(Exception e){log(scanLog,"فشل الفحص: "+e.getMessage());}
-                post(()->scanButton.setEnabled(true));
+                    LanScanner.scan(this,net,new LanScanner.Update(){
+                        @Override public void device(LanScanner.Device device){
+                            post(()->{
+                                TextView item=scanRows.get(device.ip);
+                                if(item==null){
+                                    item=text("",13,GREEN,false);
+                                    item.setPadding(dp(12),dp(12),dp(12),dp(12));
+                                    item.setBackground(surface(BG,BORDER,11));
+                                    scanRows.put(device.ip,item);
+                                    lanResults.addView(item,margins(-1,-2,5,0));
+                                }
+                                String kind=device.kind();
+                                String prefix=device.self?"▣  ":device.gateway?"◈  ":"●  ";
+                                String details=prefix+device.displayName()+"  •  "+device.ip+
+                                    "\n"+kind+
+                                    (device.latency>=0?String.format(Locale.US,"  |  %.2f ms",device.latency):"")+
+                                    "\nMAC: "+(device.mac.isEmpty()?"غير متاح":device.mac)+
+                                    (device.vendor.isEmpty()?"":"  |  "+device.vendor)+
+                                    "\nالتعرّف: "+(device.source.isEmpty()?"غير محدد":device.source);
+                                item.setText(details);
+                                if(!device.self){
+                                    item.setOnClickListener(z->openRouter(device.ip));
+                                }
+                            });
+                        }
+                        @Override public void progress(int done,int total,int detected){
+                            post(()->{
+                                int pct=total>0?Math.min(100,Math.round(done*100f/total)):100;
+                                scanProgress.setProgress(pct);
+                                scanLog.setText(String.format(Locale.US,
+                                    "جاري الفحص: %d / %d  •  %d%%  •  الأجهزة المستجيبة: %d",
+                                    done,total,pct,detected));
+                            });
+                        }
+                        @Override public void info(String line){
+                            log(scanLog,line);
+                        }
+                    });
+                }catch(InterruptedException ignored){log(scanLog,"توقف الفحص قبل اكتماله");}
+                catch(Exception e){log(scanLog,"تعذّر إكمال الفحص: "+e.getMessage());}
+                post(()->{
+                    scanProgress.setProgress(100);
+                    scanButton.setText("إعادة فحص الأجهزة");scanButton.setEnabled(true);
+                    scanLog.append("\nاكتمل الفحص • العناصر المعروضة: "+scanRows.size());
+                });
             },"MT_TOOLS-LAN-scan").start();
         });
-
+        }
+        if(section.equals("ubnt")) {
         LinearLayout ubnt=card(root,"اكتشاف أجهزة Ubiquiti • UBNT");
         ubnt.addView(text("اكتشاف أصلي عبر UDP/10001 وليس تخميناً من ARP. الموديل وUptime يظهران فقط عند إرسالهما من الجهاز.",11,MUTED,false));
         Button find=button("بدء UBNT Discovery",0xFF173245);
@@ -189,6 +260,65 @@ public final class ToolsActivity extends Activity {
                 post(()->find.setEnabled(true));
             },"MT_TOOLS-UBNT").start();
         });
+        }
+        if(section.equals("diagnostics")){
+            LinearLayout dns=card(root,"DNS • تحليل اسم الموقع");
+            EditText dnsTarget=new EditText(this);
+            dnsTarget.setSingleLine(true);dnsTarget.setText("www.google.com");
+            dnsTarget.setTextColor(WHITE);dnsTarget.setHintTextColor(MUTED);
+            dnsTarget.setBackground(surface(BG,BORDER,12));
+            dnsTarget.setPadding(dp(12),dp(10),dp(12),dp(10));
+            dnsTarget.setTextDirection(View.TEXT_DIRECTION_LTR);
+            dns.addView(dnsTarget,margins(-1,dp(48),0,8));
+            Button dnsButton=button("اختبار DNS",0xFF173245);
+            dns.addView(dnsButton,new LinearLayout.LayoutParams(-1,dp(49)));
+            TextView dnsResult=text("نتيجة تحليل DNS تظهر هنا.",12,GREEN,false);
+            dnsResult.setTextIsSelectable(true);
+            dns.addView(dnsResult,margins(-1,-2,10,0));
+            dnsButton.setOnClickListener(v->{
+                String domain=dnsTarget.getText().toString().trim();
+                if(!PingService.validTarget(domain)){dnsTarget.setError("عنوان غير صحيح");return;}
+                dnsButton.setEnabled(false);dnsResult.setText("جاري تحليل DNS...");
+                new Thread(()->{
+                    long started=android.os.SystemClock.elapsedRealtime();
+                    try{
+                        InetAddress[] ips=InetAddress.getAllByName(domain);
+                        StringBuilder b=new StringBuilder("DNS • "+domain);
+                        for(InetAddress ip:ips)b.append("\n•  ").append(ip.getHostAddress());
+                        b.append("\nالمدة: ").append(android.os.SystemClock.elapsedRealtime()-started).append(" ms");
+                        post(()->dnsResult.setText(b.toString()));
+                    }catch(Exception e){post(()->dnsResult.setText("فشل تحليل DNS: "+e.getMessage()));}
+                    post(()->dnsButton.setEnabled(true));
+                },"MT_TOOLS-DNS").start();
+            });
+
+            LinearLayout ports=card(root,"اختبار منافذ TCP");
+            ports.addView(text("افحص الخدمات الشائعة على جهاز بشبكتك، أو اكتب عنواناً عاماً.",11,MUTED,false));
+            EditText portHost=new EditText(this);portHost.setSingleLine(true);portHost.setText("192.168.1.1");
+            portHost.setTextColor(WHITE);portHost.setBackground(surface(BG,BORDER,12));
+            portHost.setTextDirection(View.TEXT_DIRECTION_LTR);
+            portHost.setPadding(dp(12),dp(10),dp(12),dp(10));
+            ports.addView(portHost,margins(-1,dp(48),9,9));
+            Button check=button("فحص المنافذ 22، 53، 80، 443، 8080، 8291",0xFF173245);
+            ports.addView(check,new LinearLayout.LayoutParams(-1,dp(53)));
+            TextView portResult=text("",12,GREEN,false);portResult.setTextIsSelectable(true);
+            ports.addView(portResult,margins(-1,-2,10,0));
+            check.setOnClickListener(v->{
+                String host=portHost.getText().toString().trim();
+                if(!PingService.validTarget(host)){portHost.setError("عنوان غير صحيح");return;}
+                check.setEnabled(false);portResult.setText("جاري فحص منافذ TCP...");
+                new Thread(()->{
+                    StringBuilder b=new StringBuilder();
+                    for(int port:new int[]{22,53,80,443,8080,8291}){
+                        try(Socket socket=new Socket()){
+                            socket.connect(new InetSocketAddress(host,port),950);
+                            b.append(port).append("  •  مفتوح\n");
+                        }catch(Exception e){b.append(port).append("  •  مغلق أو محجوب\n");}
+                    }
+                    post(()->{portResult.setText(b.toString());check.setEnabled(true);});
+                },"MT_TOOLS-TCP").start();
+            });
+        }
         root.addView(text("MT_RADIUS • أدوات صيانة الشبكات",11,MUTED,false),margins(-1,-2,20,0));
     }
 

@@ -73,12 +73,17 @@ jobs:
       - name: Publish MT_TOOLS release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v2.0.1
-          name: MT_TOOLS v2.0.1
+          tag_name: v2.1.0
+          name: MT_TOOLS v2.1.0
           target_commitish: ${{ github.sha }}
           body: |
-            **MT_TOOLS v2.0.1 • أدوات صيانة الشبكات**
+            **MT_TOOLS v2.1.0 • أدوات صيانة الشبكات**
 
+            - Sidebar لتوزيع كل أداة على صفحة منفصلة.
+            - فحص تلقائي بخمس طرق دون خيارات تعقيد: Ping وTCP وUPnP وNetBIOS وARP/Netlink.
+            - إظهار Gateway وجهاز الهاتف، تقدم الفحص اللحظي، أسماء الأجهزة وعناوين MAC إن توفرت.
+            - تجربة تحديد مصنع الجهاز من OUI عندما يكون عنوان MAC موثوقاً.
+            - أدوات DNS وفحص المنافذ الشائعة 22 و53 و80 و443 و8080 و8291.
             - تغيير اسم التطبيق إلى MT_TOOLS مع الاحتفاظ بمعرف الحزمة لترقية التطبيق السابق.
             - كتابة فاصل Ping يدوي بالمللي ثانية: من 200 إلى 60000، الافتراضي 1000.
             - Traceroute مع تدرج TTL على الأجهزة الداعمة.

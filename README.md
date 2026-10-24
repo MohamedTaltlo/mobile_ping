@@ -6,6 +6,16 @@ Native Android ICMP monitoring app, inspired by Termux ping output. Foreground b
 
 See the source and [build workflow](.github/workflows/android.yml). The APK is a debug-signed sideload build; it is not a Play Store release.
 
+## الإصدار 2.1.0
+
+- قائمة جانبية Sidebar؛ كل فكرة في صفحة مستقلة: Ping، معلومات الشبكة، كشف الأجهزة، Traceroute، Ubiquiti Discovery، DNS وفحص المنافذ.
+- البحث عن الأجهزة يفعل تلقائياً وبصمت: ICMP وTCP وUPnP/SSDP وNetBIOS NBSTAT وARP بالإضافة إلى Linux Netlink RTM_GETNEIGH حيث يسمح النظام.
+- عرض Gateway وهذا الهاتف مباشرة، مع مؤشر تقدم حيّ ونسبة مئوية أثناء المسح، وزمن استجابة Ping إن توفر.
+- إظهار اسم الجهاز الذي يقدمه بروتوكول الاستعلام، والشركة المصنعة من OUI عندما يمكن التحقق من MAC، ونوع الجهاز كاحتمال لا حقيقة مؤكدة.
+- MAC قد لا يكون متاحاً حتى عند وجود الجهاز؛ بعض الهواتف والراوترات تمنع الاستعلامات أو تعيد MAC عشوائياً. لا يمكن لأي تطبيق ضمان كشف كل أسماء الأجهزة في كل الشبكات.
+- فحص DNS والمنافذ الشائعة خدمة إضافية لفني الصيانة.
+- الكشف محصور في نطاق شبكة Wi-Fi المحلية الصغيرة (حتى 254 عنواناً)، ولا يُمسح نطاق خارجي.
+
 ## الإصدار 2.0.0
 
 - التطبيق صار MT_TOOLS (المعرّف Android نفسه لتسهيل ترقية النسخة السابقة).

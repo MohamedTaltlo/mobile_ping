@@ -43,6 +43,7 @@ public final class MainActivity extends Activity {
         }
     };
 
+    private Sidebar sidebar;
     private EditText hostInput;
     private Button startButton;
     private EditText intervalInput;
@@ -135,7 +136,7 @@ public final class MainActivity extends Activity {
                 return insets;
             });
         }
-        setContentView(scrolling);
+        sidebar = Sidebar.attach(this, scrolling, "ping");
         LinearLayout root = vertical();
         root.setPadding(dp(18), dp(18), dp(18), dp(28));
         root.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
@@ -155,24 +156,15 @@ public final class MainActivity extends Activity {
         statusText.setPadding(dp(12), dp(9), dp(12), dp(9));
         statusText.setBackground(shape(CARD, BORDER, 30));
         header.addView(statusText);
+        TextView menuButton = txt("☰", 26, GREEN, true);
+        menuButton.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams menuParams = new LinearLayout.LayoutParams(dp(48), dp(48));
+        menuParams.rightMargin = dp(5);
+        header.addView(menuButton, menuParams);
+        menuButton.setContentDescription("فتح القائمة الجانبية");
+        menuButton.setOnClickListener(v -> sidebar.open());
         root.addView(header);
-        LinearLayout navigation = horizontal();
-        Button pingTab = new Button(this);
-        pingTab.setText("●  بينغ");
-        pingTab.setAllCaps(false);
-        pingTab.setTextColor(GREEN);
-        pingTab.setBackground(shape(CARD, BORDER, 12));
-        navigation.addView(pingTab, new LinearLayout.LayoutParams(0, dp(44), 1));
-        Button toolTab = new Button(this);
-        toolTab.setText("المسار وعنوان IP  ←");
-        toolTab.setAllCaps(false);
-        toolTab.setTextColor(WHITE);
-        toolTab.setBackground(shape(0xFF173245, BORDER, 12));
-        LinearLayout.LayoutParams navParams = new LinearLayout.LayoutParams(0, dp(44), 1.5f);
-        navParams.rightMargin = dp(8);
-        navigation.addView(toolTab, navParams);
-        toolTab.setOnClickListener(v -> startActivity(new Intent(this, ToolsActivity.class)));
-        root.addView(navigation, margin(-1, -2, 10, 5));
+        root.addView(new View(this), margin(-1, dp(9), 0, 0));
 
         LinearLayout target = vertical();
         target.setPadding(dp(16), dp(14), dp(16), dp(16));
