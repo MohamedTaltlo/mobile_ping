@@ -30,6 +30,8 @@ public final class ToolsActivity extends Activity {
     private static final int BG=0xFF07121E, CARD=0xFF101F30, BORDER=0xFF20364B,
             WHITE=0xFFF1F5F9, MUTED=0xFF90A2B8, GREEN=0xFF3EDAB6, RED=0xFFFF6278;
     private TextView localText, gatewayText, publicText, traceLog, scanLog, ubntLog;
+    private TextView wifiText, wifiAdvice;
+    private static final int WIFI_LOCATION_REQUEST = 231;
     private LinearLayout lanResults, ubntResults;
     private EditText traceHost;
     private volatile boolean closed;
@@ -106,11 +108,16 @@ public final class ToolsActivity extends Activity {
         root.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);scroll.addView(root);
 
         LinearLayout header=row();
-        TextView logo=text("MT_TOOLS",24,WHITE,true);
-        header.addView(logo,new LinearLayout.LayoutParams(0,-2,1));
+        header.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
         Button menu=button("☰",0xFF173245);
         menu.setTextColor(GREEN);menu.setTextSize(21);
         header.addView(menu,new LinearLayout.LayoutParams(dp(54),dp(47)));
+        TextView logo=text("MT_TOOLS",24,WHITE,true);
+        logo.setTextDirection(View.TEXT_DIRECTION_LTR);
+        logo.setGravity(Gravity.RIGHT|Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams logoLayout=new LinearLayout.LayoutParams(0,-2,1);
+        logoLayout.rightMargin=dp(11);
+        header.addView(logo,logoLayout);
         menu.setOnClickListener(v->sidebar.open());
         root.addView(header);
         final String section=page;
@@ -128,8 +135,30 @@ public final class ToolsActivity extends Activity {
         connection.addView(publicText,margins(-1,-2,0,12));
         Button refresh=button("تحديث عناوين الشبكة",0xFF173245);
         connection.addView(refresh,new LinearLayout.LayoutParams(-1,dp(48)));
-        refresh.setOnClickListener(v->refreshConnection());
+        refresh.setOnClickListener(v->{refreshConnection();refreshWifi();});
         refreshConnection();
+
+        View wifiDivider=new View(this);
+        wifiDivider.setBackgroundColor(BORDER);
+        connection.addView(wifiDivider,margins(-1,dp(1),18,17));
+        connection.addView(text("التردد والقناة الحالية",16,WHITE,true),margins(-1,-2,0,11));
+        wifiText=text("",14,WHITE,false);
+        wifiText.setTextIsSelectable(true);
+        connection.addView(wifiText,margins(-1,-2,0,12));
+        Button wifiChannelButton=button("تحليل القنوات المحيطة",0xFF173245);
+        connection.addView(wifiChannelButton,new LinearLayout.LayoutParams(-1,dp(48)));
+        wifiAdvice=text("اضغط تحليل القنوات للحصول على اقتراح حسب الشبكات القريبة.",12,MUTED,false);
+        wifiAdvice.setTextIsSelectable(true);
+        connection.addView(wifiAdvice,margins(-1,-2,10,0));
+        wifiChannelButton.setOnClickListener(v->{
+            if(android.os.Build.VERSION.SDK_INT>=23 &&
+                checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION)!=
+                        android.content.pm.PackageManager.PERMISSION_GRANTED){
+                requestPermissions(new String[]{android.Manifest.permission.ACCESS_FINE_LOCATION},
+                        WIFI_LOCATION_REQUEST);
+            } else analyzeWifi();
+        });
+        refreshWifi();
 
         }
         if(section.equals("trace")) {
@@ -410,9 +439,10 @@ public final class ToolsActivity extends Activity {
 
     private void refreshConnection(){
         current=NetworkTools.connection(this);
-        localText.setText("نوع الاتصال: "+current.transport+"\nعنوان الهاتف: "+
-                (current.localIp.isEmpty()?"غير متاح":current.localIp)+
-                (current.prefix>0?" /"+current.prefix:""));
+        String cidr=current.localIp.isEmpty()?"غير متاح":current.localIp+
+                (current.prefix>0?"/"+current.prefix:"");
+        localText.setText("نوع الاتصال: "+current.transport+
+                "\nعنوان الهاتف: \u2066"+cidr+"\u2069");
         gatewayText.setText("Gateway: "+(current.gateway.isEmpty()?"غير متاح":current.gateway));
         gatewayText.setEnabled(!current.gateway.isEmpty());
         publicText.setText("الآيبي الخارجي: جار الاستعلام...");
@@ -423,6 +453,46 @@ public final class ToolsActivity extends Activity {
             post(()->publicText.setText("الآيبي الخارجي: "+response));
         },"MT_TOOLS-Public-IP").start();
     }
+    private void refreshWifi(){
+        if(wifiText==null)return;
+        WifiAnalyzer.Current now=WifiAnalyzer.current(this);
+        wifiText.setText(now.describe());
+    }
+
+    private void analyzeWifi(){
+        if(wifiAdvice==null)return;
+        refreshWifi();
+        wifiAdvice.setText("جار تحديث قائمة نقاط الوصول المحيطة...");
+        android.net.wifi.WifiManager manager=(android.net.wifi.WifiManager)
+                getApplicationContext().getSystemService(android.content.Context.WIFI_SERVICE);
+        boolean requested=false;
+        if(manager!=null){
+            try{requested=manager.startScan();}
+            catch(Exception ignored){}
+        }
+        final boolean newScan=requested;
+        new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(()->{
+            if(closed || wifiAdvice==null)return;
+            WifiAnalyzer.Current now=WifiAnalyzer.current(this);
+            WifiAnalyzer.Advice advice=WifiAnalyzer.recommend(this,now);
+            wifiText.setText(now.describe());
+            wifiAdvice.setText(advice.label+
+                (newScan?"":"\nملاحظة: استخدمنا آخر نتائج متاحة؛ Android قد يقيّد تكرار فحص Wi-Fi."));
+        },newScan?3300:400);
+    }
+
+    @Override public void onRequestPermissionsResult(int requestCode,String[] permissions,int[] results){
+        super.onRequestPermissionsResult(requestCode,permissions,results);
+        if(requestCode==WIFI_LOCATION_REQUEST){
+            if(results.length>0 && results[0]==android.content.pm.PackageManager.PERMISSION_GRANTED){
+                analyzeWifi();
+            } else if(wifiAdvice!=null) {
+                wifiAdvice.setText("لعرض اسم Wi-Fi وفحص القنوات يلزم السماح بإذن الموقع وتشغيل خدمة الموقع.");
+                refreshWifi();
+            }
+        }
+    }
+
     @Override public void onBackPressed(){
         if(sidebar!=null && sidebar.isOpen()){sidebar.close();return;}
         super.onBackPressed();

@@ -150,26 +150,27 @@ public final class MainActivity extends Activity {
         scrolling.addView(root);
 
         LinearLayout header = horizontal();
+        header.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
         header.setMinimumHeight(dp(48));
+        TextView menuButton = txt("☰", 26, GREEN, true);
+        menuButton.setGravity(Gravity.CENTER);
+        header.addView(menuButton,new LinearLayout.LayoutParams(dp(48),dp(48)));
+        menuButton.setContentDescription("فتح القائمة الجانبية");
+        menuButton.setOnClickListener(v -> sidebar.open());
+
         TextView brand = txt("MT_TOOLS", 25, WHITE, true);
         brand.setLetterSpacing(.10f);
         brand.setSingleLine(true);
         brand.setTextDirection(View.TEXT_DIRECTION_LTR);
         brand.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
         LinearLayout.LayoutParams brandParams = new LinearLayout.LayoutParams(0, -2, 1);
-        brandParams.leftMargin = dp(10);
-        header.addView(brand, brandParams);
+        brandParams.rightMargin = dp(9);
+        header.addView(brand,brandParams);
+
         statusText = txt("●  متوقف", 12, MUTED, true);
-        statusText.setPadding(dp(12), dp(9), dp(12), dp(9));
-        statusText.setBackground(shape(CARD, BORDER, 30));
+        statusText.setPadding(dp(10),dp(9),dp(10),dp(9));
+        statusText.setBackground(shape(CARD,BORDER,30));
         header.addView(statusText);
-        TextView menuButton = txt("☰", 26, GREEN, true);
-        menuButton.setGravity(Gravity.CENTER);
-        LinearLayout.LayoutParams menuParams = new LinearLayout.LayoutParams(dp(48), dp(48));
-        menuParams.rightMargin = dp(5);
-        header.addView(menuButton, menuParams);
-        menuButton.setContentDescription("فتح القائمة الجانبية");
-        menuButton.setOnClickListener(v -> sidebar.open());
         root.addView(header);
         root.addView(new View(this), margin(-1, dp(9), 0, 0));
 

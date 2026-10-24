@@ -18,6 +18,10 @@ final class Sidebar {
     private final Activity activity;
     private final DrawerOverlay overlay;
     private final String active;
+    private LinearLayout sheet;
+    private View dim;
+    private int drawerWidth;
+    private boolean opening, closing;
     private static final int BG=0xFF07121E,CARD=0xFF101F30,BORDER=0xFF20364B,
             GREEN=0xFF3EDAB6,WHITE=0xFFF1F5F9,MUTED=0xFF90A2B8;
     private Sidebar(Activity activity,DrawerOverlay overlay,String active){
@@ -31,41 +35,63 @@ final class Sidebar {
         return d;
     }
 
-    /** Detect a horizontal closing swipe without stealing vertical scroll events. */
+    /** Right drawer: track a horizontal finger drag without blocking vertical scrolling. */
     private static final class DrawerOverlay extends FrameLayout {
-        private float startX,startY;
-        private final float threshold;
+        private float startX, startY, startOffset;
+        private long startTime;
         private boolean dragging;
-        private Runnable dismiss;
-        DrawerOverlay(Activity activity){
+        private boolean insideDrawer;
+        private final float touchSlop;
+        private Sidebar sidebar;
+
+        DrawerOverlay(Activity activity) {
             super(activity);
-            threshold=activity.getResources().getDisplayMetrics().density*56f;
+            touchSlop=android.view.ViewConfiguration.get(activity).getScaledTouchSlop();
         }
-        @Override public boolean onInterceptTouchEvent(MotionEvent e) {
-            if(e.getActionMasked()==MotionEvent.ACTION_DOWN){
-                startX=e.getX(); startY=e.getY(); dragging=false;
-                return super.onInterceptTouchEvent(e);
+
+        @Override public boolean onInterceptTouchEvent(MotionEvent event) {
+            if (sidebar == null || !sidebar.isOpen()) return super.onInterceptTouchEvent(event);
+            switch (event.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                    startX=event.getX(); startY=event.getY();
+                    startTime=event.getEventTime(); dragging=false;
+                    startOffset=sidebar.sheet.getTranslationX();
+                    insideDrawer=startX>=getWidth()-sidebar.drawerWidth;
+                    break;
+                case MotionEvent.ACTION_MOVE:
+                    float dx=event.getX()-startX;
+                    float dy=event.getY()-startY;
+                    if (insideDrawer && dx>touchSlop && dx>Math.abs(dy)*1.25f) {
+                        dragging=true;
+                        sidebar.cancelAnimations();
+                        return true;
+                    }
+                    break;
             }
-            if(e.getActionMasked()==MotionEvent.ACTION_MOVE){
-                float dx=e.getX()-startX, dy=e.getY()-startY;
-                if(Math.abs(dx)>threshold*.65f && Math.abs(dx)>Math.abs(dy)*1.3f){
-                    dragging=true;
-                    return true;
-                }
-            }
-            return super.onInterceptTouchEvent(e);
+            return super.onInterceptTouchEvent(event);
         }
-        @Override public boolean onTouchEvent(MotionEvent e){
-            if(dragging && (e.getActionMasked()==MotionEvent.ACTION_UP ||
-                    e.getActionMasked()==MotionEvent.ACTION_MOVE)){
-                if(Math.abs(e.getX()-startX)>threshold){
-                    dragging=false;
-                    if(dismiss!=null)dismiss.run();
-                    return true;
-                }
+
+        @Override public boolean onTouchEvent(MotionEvent event) {
+            if(!dragging)return super.onTouchEvent(event);
+            if(event.getActionMasked()==MotionEvent.ACTION_MOVE) {
+                float dx=Math.max(0,event.getX()-startX);
+                sidebar.dragTo(Math.min(sidebar.drawerWidth,startOffset+dx));
+                return true;
             }
-            if(e.getActionMasked()==MotionEvent.ACTION_CANCEL ||
-                    e.getActionMasked()==MotionEvent.ACTION_UP)dragging=false;
+            if(event.getActionMasked()==MotionEvent.ACTION_UP) {
+                float dx=Math.max(0,event.getX()-startX);
+                long elapsed=Math.max(1,event.getEventTime()-startTime);
+                boolean close=sidebar.sheet.getTranslationX()>sidebar.drawerWidth*.32f ||
+                        (dx>touchSlop*2 && dx*1000f/elapsed>900f);
+                dragging=false;
+                if(close)sidebar.close(); else sidebar.restoreOpen();
+                return true;
+            }
+            if(event.getActionMasked()==MotionEvent.ACTION_CANCEL) {
+                dragging=false;
+                sidebar.restoreOpen();
+                return true;
+            }
             return true;
         }
     }
@@ -77,22 +103,23 @@ final class Sidebar {
         overlay.setVisibility(View.GONE);
         parent.addView(overlay,new FrameLayout.LayoutParams(-1,-1));
         Sidebar menu=new Sidebar(activity,overlay,page);
-        overlay.dismiss=menu::close;
+        overlay.sidebar=menu;
         menu.setup();
         activity.setContentView(parent);
         return menu;
     }
     private void setup(){
-        View dim=new View(activity);
+        dim=new View(activity);
         dim.setBackgroundColor(0xBE030913);
         overlay.addView(dim,new FrameLayout.LayoutParams(-1,-1));
         dim.setOnClickListener(v->close());
-        LinearLayout sheet=new LinearLayout(activity);
+        sheet=new LinearLayout(activity);
         sheet.setOrientation(LinearLayout.VERTICAL);
         sheet.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
         sheet.setPadding(dp(14),dp(21),dp(14),dp(15));
         sheet.setBackgroundColor(CARD);
-        FrameLayout.LayoutParams frame=new FrameLayout.LayoutParams(dp(295),-1,Gravity.RIGHT);
+        drawerWidth=Math.min(dp(320),activity.getResources().getDisplayMetrics().widthPixels-dp(48));
+        FrameLayout.LayoutParams frame=new FrameLayout.LayoutParams(drawerWidth,-1,Gravity.RIGHT);
         overlay.addView(sheet,frame);
         TextView brand=new TextView(activity);
         brand.setText("MT_TOOLS");brand.setTextColor(WHITE);brand.setTextSize(27);
@@ -132,13 +159,50 @@ final class Sidebar {
         layout.addView(item,new LinearLayout.LayoutParams(-1,dp(56)));
         if(!page.equals(active))item.setOnClickListener(v->navigate(page));
     }
+    private void cancelAnimations(){
+        sheet.animate().cancel();
+        dim.animate().cancel();
+        closing=false;
+    }
+
+    private void dragTo(float x){
+        sheet.setTranslationX(x);
+        dim.setAlpha(Math.max(0f,1f-x/drawerWidth));
+    }
+
+    private void restoreOpen(){
+        closing=false;
+        sheet.animate().translationX(0).setDuration(180)
+                .setInterpolator(new android.view.animation.DecelerateInterpolator()).start();
+        dim.animate().alpha(1).setDuration(180).start();
+    }
+
     void open(){
+        if(overlay.getVisibility()==View.VISIBLE && !closing)return;
+        cancelAnimations();
         overlay.setVisibility(View.VISIBLE);
         overlay.bringToFront();
-        overlay.setAlpha(0f);
-        overlay.animate().alpha(1f).setDuration(160).start();
+        sheet.setTranslationX(drawerWidth);
+        dim.setAlpha(0f);
+        opening=true;
+        sheet.animate().translationX(0).setDuration(260)
+                .setInterpolator(new android.view.animation.DecelerateInterpolator())
+                .withEndAction(()->opening=false).start();
+        dim.animate().alpha(1).setDuration(260).start();
     }
-    void close(){overlay.setVisibility(View.GONE);}
+    void close(){
+        if(overlay.getVisibility()!=View.VISIBLE || closing)return;
+        cancelAnimations();
+        closing=true;
+        sheet.animate().translationX(drawerWidth).setDuration(230)
+                .setInterpolator(new android.view.animation.AccelerateInterpolator())
+                .withEndAction(()->{
+                    overlay.setVisibility(View.GONE);
+                    closing=false;
+                    opening=false;
+                }).start();
+        dim.animate().alpha(0f).setDuration(230).start();
+    }
     boolean isOpen(){return overlay.getVisibility()==View.VISIBLE;}
     void navigate(String page){
         close();
