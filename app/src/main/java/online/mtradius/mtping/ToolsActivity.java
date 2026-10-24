@@ -163,7 +163,7 @@ public final class ToolsActivity extends Activity {
         }
         if(section.equals("scanner")) {
         LinearLayout scan=card(root,"فحص الأجهزة المحلية");
-        scan.addView(text("يعمل الكشف تلقائياً بواسطة Ping وTCP وNetBIOS وUPnP وARP/Netlink دون الحاجة إلى أي إعدادات.",11,MUTED,false));
+        scan.addView(text("يعمل الكشف تلقائياً بواسطة Ping وTCP وNetBIOS وUPnP وARP وجدول الجيران دون الحاجة إلى أي إعدادات.",11,MUTED,false));
         scan.addView(text("يظهر الراوتر والهاتف مباشرة. بقية الأجهزة تُضاف وتُحدّث أثناء الفحص.",11,MUTED,false),
                      margins(-1,-2,7,0));
         Button scanButton=button("بدء كشف الأجهزة",0xFF173245);
@@ -336,6 +336,10 @@ public final class ToolsActivity extends Activity {
             String response=data;
             post(()->publicText.setText("الآيبي الخارجي: "+response));
         },"MT_TOOLS-Public-IP").start();
+    }
+    @Override public void onBackPressed(){
+        if(sidebar!=null && sidebar.isOpen()){sidebar.close();return;}
+        super.onBackPressed();
     }
     @Override protected void onDestroy(){closed=true;generation++;super.onDestroy();}
 }

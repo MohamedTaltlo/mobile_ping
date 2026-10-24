@@ -477,6 +477,11 @@ public final class MainActivity extends Activity {
         super.onPause();
     }
 
+    @Override public void onBackPressed() {
+        if (sidebar != null && sidebar.isOpen()) { sidebar.close(); return; }
+        super.onBackPressed();
+    }
+
     @Override protected void onDestroy() {
         ui.removeCallbacks(refresh);
         if (outageStore != null) outageStore.close();

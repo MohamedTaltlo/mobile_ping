@@ -15,6 +15,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -211,10 +212,17 @@ final class LanScanner {
             gateway.type="راوتر / بوابة";gateway.source="إعدادات Wi-Fi";
             update.device(gateway);
         }
+        Map<String,Device> all=new ConcurrentHashMap<>();
+        all.put(self.ip,self);
+        if(!net.gateway.isEmpty()){
+            Device d=new Device(net.gateway);d.gateway=true;d.type="راوتر / بوابة";
+            d.source="إعدادات الشبكة";all.put(d.ip,d);
+        }
         Map<String,String> upnp=ssdp(ctx);
         for(Map.Entry<String,String> entry:upnp.entrySet()){
             if(entry.getKey().startsWith(prefix)){
                 Device d=new Device(entry.getKey());d.type=entry.getValue();d.source="UPnP/SSDP";
+                all.put(d.ip,d);
                 update.device(d);
             }
         }
@@ -251,6 +259,13 @@ final class LanScanner {
                             if(d.mac.isEmpty()) d.mac=NetworkTools.localArpMac(ip);
                             d.vendor=vendor(d.mac);
                             if(upnp.containsKey(ip))d.type=upnp.get(ip);
+                            d.port80=tcp(ip,80,170)==2 || d.port80;
+                            d.port443=tcp(ip,443,170)==2 || d.port443;
+                            d.port22=tcp(ip,22,170)==2 || d.port22;
+                            d.port554=tcp(ip,554,150)==2;
+                            d.port9100=tcp(ip,9100,150)==2;
+                            d.port445=tcp(ip,445,150)==2;
+                            all.put(ip,d);
                             update.device(d);detected.incrementAndGet();
                             // Enrichment is non-blocking for the rest of the subnet.
                             NbInfo nb=netbios(ip);
@@ -271,8 +286,18 @@ final class LanScanner {
             }
         }finally{pool.shutdownNow();}
         arp.refresh();
-        // A populated kernel neighbor cache may only be accessible after the probes.
+        // Many neighbor entries appear only after the ping/TCP sweep warms up.
+        // Re-query and re-publish enriched device rows if the OS exposed new MACs.
+        for(Device device:all.values()){
+            if(device.mac.isEmpty()){
+                String mac=arp.get(device.ip);
+                if(!mac.isEmpty()){
+                    device.mac=mac;device.vendor=vendor(mac);
+                    update.device(device);
+                }
+            }
+        }
         update.info("انتهى الفحص. الأجهزة المستجيبة: "+detected.get()+
-                " • MAC: عبر ARP/Netlink/NetBIOS إن توفّر، والتصنيف تقريبي ما لم يرسل الجهاز هويته.");
+                " • نوع الجهاز يُستنتج من الخدمات أو MAC عند توفرهما.");
     }
 }

@@ -1,16 +1,7 @@
 package online.mtradius.mtping;
 
-import android.system.NetlinkSocketAddress;
-import android.system.Os;
-import android.system.OsConstants;
-import android.system.StructTimeval;
 import java.io.BufferedReader;
-import java.io.FileDescriptor;
 import java.io.FileReader;
-import java.net.Inet4Address;
-import java.net.InetAddress;
-import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
@@ -35,7 +26,7 @@ final class NeighborLookup {
     void refresh() {
         readProc();
         readShell();
-        readNetlink();
+        readToyboxArp();
     }
     private void readProc(){
         try(BufferedReader r=new BufferedReader(new FileReader("/proc/net/arp"))){
@@ -65,58 +56,28 @@ final class NeighborLookup {
         }
     }
 
-    /** Linux RTM_GETNEIGH read-only netlink dump. Some Android ROMs deny it. */
-    private void readNetlink(){
-        FileDescriptor fd=null;
-        try{
-            fd=Os.socket(OsConstants.AF_NETLINK,OsConstants.SOCK_DGRAM,OsConstants.NETLINK_ROUTE);
-            Os.bind(fd,new NetlinkSocketAddress(0,0));
-            Os.setsockoptTimeval(fd,OsConstants.SOL_SOCKET,OsConstants.SO_RCVTIMEO,
-                    StructTimeval.fromMillis(350));
-            ByteBuffer req=ByteBuffer.allocate(28).order(ByteOrder.nativeOrder());
-            req.putInt(28).putShort((short)30).putShort((short)0x301);
-            req.putInt(1234).putInt(0);
-            req.put((byte)OsConstants.AF_INET);
-            req.put(new byte[11]);
-            byte[] query=req.array();
-            Os.sendto(fd,query,0,query.length,0,new NetlinkSocketAddress(0,0));
-            byte[] packet=new byte[16384];
-            for(int attempt=0;attempt<9;attempt++){
-                int size=Os.read(fd,packet,0,packet.length);
-                if(size<=0)break;
-                ByteBuffer buffer=ByteBuffer.wrap(packet,0,size).order(ByteOrder.nativeOrder());
-                int pos=0;
-                boolean finished=false;
-                while(pos+16<=size){
-                    int msgLength=buffer.getInt(pos);
-                    int type=buffer.getShort(pos+4)&65535;
-                    if(msgLength<16 || pos+msgLength>size)break;
-                    if(type==3 || type==2){finished=true;break;}
-                    if(type==28 && msgLength>=28 && (packet[pos+16]&255)==OsConstants.AF_INET){
-                        int attr=pos+28,until=pos+msgLength;
-                        String address="", mac="";
-                        while(attr+4<=until){
-                            int len=buffer.getShort(attr)&65535;
-                            int kind=buffer.getShort(attr+2)&65535;
-                            if(len<4 || attr+len>until)break;
-                            if(kind==1 && len>=8){
-                                address=(packet[attr+4]&255)+"."+(packet[attr+5]&255)+"."+
-                                    (packet[attr+6]&255)+"."+(packet[attr+7]&255);
-                            }else if(kind==2 && len>=10){
-                                mac=String.format(Locale.US,"%02X:%02X:%02X:%02X:%02X:%02X",
-                                    packet[attr+4]&255,packet[attr+5]&255,packet[attr+6]&255,
-                                    packet[attr+7]&255,packet[attr+8]&255,packet[attr+9]&255);
-                            }
-                            attr+=(len+3)&~3;
-                        }
-                        if(!address.isEmpty())put(address,mac);
-                    }
-                    pos+=(msgLength+3)&~3;
+    private void readToyboxArp() {
+        String[] binaries={"/system/bin/arp","/system/xbin/arp"};
+        for(String exe:binaries){
+            if(!new java.io.File(exe).canExecute())continue;
+            Process p=null;
+            try{
+                p=new ProcessBuilder(exe,"-an").redirectErrorStream(true).start();
+                if(!p.waitFor(650,TimeUnit.MILLISECONDS)){
+                    p.destroyForcibly();continue;
                 }
-                if(finished)break;
-            }
-        }catch(Exception ignored){}finally{
-            if(fd!=null)try{Os.close(fd);}catch(Exception ignored){}
+                try(BufferedReader r=new BufferedReader(
+                        new java.io.InputStreamReader(p.getInputStream()))){
+                    String line;
+                    Pattern ipPattern=Pattern.compile(
+                            "(?:\\\\d{1,3}\\\\.){3}\\\\d{1,3}");
+                    while((line=r.readLine())!=null){
+                        Matcher ip=ipPattern.matcher(line);
+                        Matcher mac=MAC.matcher(line);
+                        if(ip.find()&&mac.find())put(ip.group(),mac.group(1));
+                    }
+                }
+            }catch(Exception ignored){}finally{if(p!=null)p.destroy();}
         }
     }
 }
