@@ -47,13 +47,11 @@ public final class PingService extends Service {
         @Override public void run() {
             PingState.Snapshot snapshot = PingState.INSTANCE.snapshot();
             if (!snapshot.running) return;
-            if (snapshot.isDown()) {
-                long now = System.currentTimeMillis();
-                if (activeOutageId > 0) {
-                    outageStore.heartbeat(activeOutageId, now, snapshot.downMs);
-                }
-                publishMonitor(snapshot);
-                if (warningActive) publishAlert(snapshot, false, false);
+            if (snapshot.isDown() && activeOutageId > 0) {
+                // Persist progress only. Both SystemUI chronometers count from
+                // the same fixed timestamp without rebuilding notifications.
+                outageStore.heartbeat(activeOutageId,
+                        System.currentTimeMillis(), snapshot.downMs);
             }
             handler.postDelayed(this, 1000L);
         }
@@ -126,11 +124,13 @@ public final class PingService extends Service {
         final int generation = epoch.incrementAndGet();
         Thread previous = worker;
         if (previous != null) previous.interrupt();
-        // Finish a previous measurement rather than silently losing an open outage.
-        if (activeOutageId > 0) finishOutage(PingState.INSTANCE.snapshot().downMs, "stopped");
+        // Every explicit start/restart begins a completely new session.
+        // Do not carry a past outage or exported history into the new run.
+        outageStore.clearSession();
+        new java.io.File(getFilesDir(), "mt_ping.csv").delete();
+        new java.io.File(getFilesDir(), "mt_ping_previous.csv").delete();
         PingState.INSTANCE.start(host);
-        OutageStore.Entry latest = outageStore.latest(host);
-        lastCompletedMs = latest == null ? -1 : latest.durationMs;
+        lastCompletedMs = -1;
         activeOutageId = -1;
         warningActive = false;
         outageStartedWall = -1;
@@ -138,7 +138,6 @@ public final class PingService extends Service {
         startForegroundNow("بدء فحص " + host);
         acquireCpu();
 
-        final PingLog csv = new PingLog(this);
         Thread thread = new Thread(() -> {
             long sequence = 0;
             long nextAt = SystemClock.elapsedRealtime();
@@ -156,7 +155,6 @@ public final class PingService extends Service {
                 PingState.INSTANCE.record(sample);
                 PingState.Snapshot after = PingState.INSTANCE.snapshot();
 
-                csv.append(host, sample);
                 if (!before.isDown() && after.isDown()) {
                     outageStartedWall = Math.max(1L, System.currentTimeMillis() - after.downMs);
                     activeOutageId = outageStore.begin(host, outageStartedWall);
@@ -169,7 +167,10 @@ public final class PingService extends Service {
                     warningActive = false;
                     outageStartedWall = -1;
                 }
-                publishMonitor(after);
+                // Keep both platform chronometers untouched while disconnected:
+                // rebuilding the notification every packet makes SystemUI redraw
+                // at different moments and causes visibly out-of-sync counters.
+                if (!after.isDown() || !before.isDown()) publishMonitor(after);
 
                 nextAt += intervalMillis;
                 long now = SystemClock.elapsedRealtime();
@@ -227,8 +228,14 @@ public final class PingService extends Service {
         }
         PingState.INSTANCE.stop();
         if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
-        if (userStop) getSharedPreferences("settings", MODE_PRIVATE)
-                .edit().putBoolean("active", false).apply();
+        if (userStop) {
+            getSharedPreferences("settings", MODE_PRIVATE)
+                    .edit().putBoolean("active", false).apply();
+            // Closing a monitoring session removes every recorded outage.
+            outageStore.clearSession();
+            notificationManager().cancel(ALERT_ID);
+            lastCompletedMs = -1;
+        }
     }
 
     private PendingIntent openIntent() {
@@ -285,7 +292,7 @@ public final class PingService extends Service {
         PingSample last = snapshot.last();
         String details;
         if (snapshot.isDown()) {
-            details = "منقطع منذ " + asClock(snapshot.downMs) + " • " + snapshot.host + " • العداد المباشر بجانب الإشعار";
+            details = "انقطاع مستمر • " + snapshot.host + " • عداد الفصل يعمل تلقائياً";
         } else if (last != null && last.kind == PingSample.Kind.REPLY) {
             details = String.format(Locale.US, "متصل • %.2f مللي ثانية • %s", last.rttMs, snapshot.host);
         } else if (last != null && last.kind == PingSample.Kind.ERROR) {
@@ -304,7 +311,7 @@ public final class PingService extends Service {
         String text;
         if (!closed) {
             title = "انقطاع الاتصال • MT_PING";
-            text = "العنوان: " + snapshot.host + " • مدة الفصل: " + asClock(snapshot.downMs);
+            text = "العنوان: " + snapshot.host + " • عداد الفصل المباشر أعلى الإشعار";
         } else {
             title = "انتهت متابعة الانقطاع • MT_PING";
             PingSample last = snapshot.last();

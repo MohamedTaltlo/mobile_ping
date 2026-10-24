@@ -7,12 +7,6 @@ import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteOpenHelper;
 import java.util.ArrayList;
 import java.util.List;
-import java.io.IOException;
-import java.io.OutputStream;
-import java.nio.charset.StandardCharsets;
-import java.text.SimpleDateFormat;
-import java.util.Date;
-import java.util.Locale;
 
 /** Durable outage ledger. An unfinished row is never counted as a confirmed recovery. */
 final class OutageStore extends SQLiteOpenHelper {
@@ -123,32 +117,8 @@ final class OutageStore extends SQLiteOpenHelper {
         }
     }
 
-    private static String csvField(String s) {
-        return "\"" + (s == null ? "" : s).replace("\"", "\"\"").replace("\r", " ").replace("\n", " ") + "\"";
-    }
-
-    synchronized void exportTo(OutputStream out) throws IOException {
-        out.write(new byte[]{(byte) 0xEF, (byte) 0xBB, (byte) 0xBF}); // Excel UTF-8
-        out.write("رقم,العنوان,بدأ_في,انتهى_في,المدة_بالثواني,الحالة\n".getBytes(StandardCharsets.UTF_8));
-        SimpleDateFormat format = new SimpleDateFormat("yyyy/MM/dd HH:mm:ss", Locale.US);
-        try (Cursor c = getReadableDatabase().rawQuery(
-                "SELECT id,host,began_at,ended_at,duration_ms,outcome FROM outages ORDER BY id DESC", null)) {
-            while (c.moveToNext()) {
-                Entry e = read(c);
-                String state;
-                if ("active".equals(e.outcome)) state = "مستمر";
-                else if ("recovered".equals(e.outcome)) state = "عاد الاتصال";
-                else if ("stopped".equals(e.outcome)) state = "توقفت المراقبة";
-                else if ("error".equals(e.outcome)) state = "خطأ بالفحص";
-                else state = "انتهى الرصد دون تأكيد العودة";
-                String row = String.format(Locale.US, "%d,%s,%s,%s,%.3f,%s\n",
-                        e.id, csvField(e.host),
-                        csvField(format.format(new Date(e.beganAt))),
-                        csvField(e.active() ? "" : format.format(new Date(e.endedAt))),
-                        e.durationMs / 1000.0, csvField(state));
-                out.write(row.getBytes(StandardCharsets.UTF_8));
-            }
-        }
-        out.flush();
+    /** Starts a new monitoring session with no history from earlier sessions. */
+    synchronized void clearSession() {
+        getWritableDatabase().delete("outages", null, null);
     }
 }

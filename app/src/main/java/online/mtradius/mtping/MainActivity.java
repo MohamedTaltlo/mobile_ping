@@ -6,7 +6,6 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
-import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -22,7 +21,6 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
-import java.io.OutputStream;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.List;
@@ -38,8 +36,6 @@ public final class MainActivity extends Activity {
     private static final int RED = 0xFFFF6278;
     private static final int ORANGE = 0xFFFFC36A;
     private static final int[] INTERVALS = {1000, 2000, 5000};
-    private static final int SAVE_CSV = 515;
-    private static final int SAVE_OUTAGES = 516;
     private final Handler ui = new Handler(Looper.getMainLooper());
     private final Runnable refresh = new Runnable() {
         @Override public void run() {
@@ -162,7 +158,7 @@ public final class MainActivity extends Activity {
         statusText.setBackground(shape(CARD, BORDER, 30));
         header.addView(statusText);
         root.addView(header);
-        root.addView(txt("مراقبة الشبكة لحظة بلحظة • الإصدار 1.1.1", 10, MUTED, true), margin(-1, -2, 2, 16));
+        root.addView(new View(this), margin(-1, dp(8), 0, 0));
 
         LinearLayout target = vertical();
         target.setPadding(dp(16), dp(14), dp(16), dp(16));
@@ -233,19 +229,10 @@ public final class MainActivity extends Activity {
         startButton.setTextSize(14);
         startButton.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         startButton.setBackground(shape(GREEN, 0, 14));
-        LinearLayout.LayoutParams ap = new LinearLayout.LayoutParams(0, dp(52), 1.8f);
-        ap.rightMargin = dp(10);
+        LinearLayout.LayoutParams ap = new LinearLayout.LayoutParams(-1, dp(52));
         actions.addView(startButton, ap);
         startButton.setOnClickListener(v -> toggleMonitor());
 
-        Button exportButton = new Button(this);
-        exportButton.setAllCaps(false);
-        exportButton.setText("↓ تصدير السجل");
-        exportButton.setTextColor(WHITE);
-        exportButton.setTextSize(13);
-        exportButton.setBackground(shape(CARD, BORDER, 14));
-        actions.addView(exportButton, new LinearLayout.LayoutParams(0, dp(52), 1));
-        exportButton.setOnClickListener(v -> exportCSV());
         root.addView(actions, margin(-1, -2, 12, 0));
 
         LinearLayout hero = vertical();
@@ -290,20 +277,12 @@ public final class MainActivity extends Activity {
         graphCard.addView(graph, new LinearLayout.LayoutParams(-1, dp(220)));
         root.addView(graphCard);
 
-        addHeading(root, "سجل جميع مرات الفصل");
+        addHeading(root, "سجل الفصل للجلسة الحالية");
         outageHistory = txt("لم يتم تسجيل أي انقطاع حتى الآن.", 12, MUTED, false);
         outageHistory.setPadding(dp(15), dp(12), dp(15), dp(12));
         outageHistory.setBackground(shape(CARD, BORDER, 16));
         root.addView(outageHistory);
         outageHistory.setTextIsSelectable(true);
-
-        Button outageExportButton = new Button(this);
-        outageExportButton.setAllCaps(false);
-        outageExportButton.setText("↓ تصدير سجل الفصل الكامل CSV");
-        outageExportButton.setTextColor(GREEN);
-        outageExportButton.setBackground(shape(CARD, BORDER, 12));
-        root.addView(outageExportButton, margin(-1, dp(48), 8, 0));
-        outageExportButton.setOnClickListener(v -> exportOutages());
 
         addHeading(root, "نتائج النبضات بالتفصيل");
         logText = txt("بانتظار نتائج النبضات...", 12, GREEN, false);
@@ -442,7 +421,7 @@ public final class MainActivity extends Activity {
         SimpleDateFormat time = new SimpleDateFormat("yyyy/MM/dd  HH:mm:ss", Locale.US);
         List<OutageStore.Entry> history = outageStore.recent(50);
         StringBuilder b = new StringBuilder();
-        b.append("إجمالي مرات الفصل المسجّلة: ").append(outageStore.count())
+        b.append("مرات الفصل خلال المراقبة الحالية: ").append(outageStore.count())
                 .append("  •  مدة الفصل بهذه الجلسة: ").append(duration(downTime))
                 .append("  •  أخطاء الفحص: ").append(errors).append("\n");
         if (history.isEmpty()) {
@@ -468,43 +447,6 @@ public final class MainActivity extends Activity {
             }
         }
         outageHistory.setText(b.toString());
-    }
-
-    private void exportOutages() {
-        Intent save = new Intent(Intent.ACTION_CREATE_DOCUMENT);
-        save.addCategory(Intent.CATEGORY_OPENABLE);
-        save.setType("text/csv");
-        String date = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date());
-        save.putExtra(Intent.EXTRA_TITLE, "MT_PING_Outages_" + date + ".csv");
-        startActivityForResult(save, SAVE_OUTAGES);
-    }
-
-    private void exportCSV() {
-        Intent save = new Intent(Intent.ACTION_CREATE_DOCUMENT);
-        save.addCategory(Intent.CATEGORY_OPENABLE);
-        save.setType("text/csv");
-        String date = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date());
-        save.putExtra(Intent.EXTRA_TITLE, "MT_PING_" + date + ".csv");
-        startActivityForResult(save, SAVE_CSV);
-    }
-
-    @Override protected void onActivityResult(int request, int result, Intent data) {
-        super.onActivityResult(request, result, data);
-        if ((request == SAVE_CSV || request == SAVE_OUTAGES) && result == RESULT_OK && data != null) {
-            Uri uri = data.getData();
-            if (uri == null) return;
-            try (OutputStream out = getContentResolver().openOutputStream(uri)) {
-                if (out == null) throw new java.io.IOException("تعذّر فتح ملف التصدير");
-                if (request == SAVE_CSV) {
-                    new PingLog(this).exportTo(out);
-                } else {
-                    outageStore.exportTo(out);
-                }
-                Toast.makeText(this, "تم تصدير السجل بنجاح", Toast.LENGTH_SHORT).show();
-            } catch (Exception e) {
-                Toast.makeText(this, "تعذّر تصدير السجل: " + e.getMessage(), Toast.LENGTH_LONG).show();
-            }
-        }
     }
 
     @Override protected void onResume() {
