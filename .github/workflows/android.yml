@@ -73,12 +73,13 @@ jobs:
       - name: Publish MT_PING release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.1.1
-          name: MT_PING v1.1.1
+          tag_name: v1.1.2
+          name: MT_PING v1.1.2
           target_commitish: ${{ github.sha }}
           body: |
-            **MT_PING 1.1.1 • إصلاح الترويسة وشريط الحالة**
+            **MT_PING 1.1.2 • إصلاح عداد الفصل المباشر والترويسة والرسم البياني**
 
+            - عداد فصل أصلي من نظام Android داخل إشعار المراقبة والتنبيه، يتقدم دون الحاجة إلى تحديث نص الإشعار كل ثانية.
             - إصلاح تداخل الترويسة مع شريط الساعة والإشعارات على Android 15+.
             - ترتيب الاسم وحالة الاتصال مع هامش آمن وواجهة RTL.
             - إشعار تنبيه عند بدء كل انقطاع.

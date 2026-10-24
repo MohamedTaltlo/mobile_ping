@@ -40,6 +40,8 @@ public final class PingService extends Service {
     private volatile long activeOutageId = -1;
     private volatile long lastCompletedMs = -1;
     private volatile boolean warningActive;
+    // Fixed starting timestamp for Android SystemUI's own chronometer.
+    private volatile long outageStartedWall = -1;
 
     private final Runnable notificationTicker = new Runnable() {
         @Override public void run() {
@@ -131,6 +133,7 @@ public final class PingService extends Service {
         lastCompletedMs = latest == null ? -1 : latest.durationMs;
         activeOutageId = -1;
         warningActive = false;
+        outageStartedWall = -1;
         notificationManager().cancel(ALERT_ID);
         startForegroundNow("بدء فحص " + host);
         acquireCpu();
@@ -155,7 +158,8 @@ public final class PingService extends Service {
 
                 csv.append(host, sample);
                 if (!before.isDown() && after.isDown()) {
-                    activeOutageId = outageStore.begin(host, System.currentTimeMillis());
+                    outageStartedWall = Math.max(1L, System.currentTimeMillis() - after.downMs);
+                    activeOutageId = outageStore.begin(host, outageStartedWall);
                     warningActive = true;
                     publishAlert(after, false, true);
                 } else if (before.isDown() && !after.isDown() && activeOutageId > 0) {
@@ -163,6 +167,7 @@ public final class PingService extends Service {
                     finishOutage(duration, sample.kind == PingSample.Kind.REPLY ? "recovered" : "error");
                     if (warningActive) publishAlert(after, true, false);
                     warningActive = false;
+                    outageStartedWall = -1;
                 }
                 publishMonitor(after);
 
@@ -218,6 +223,7 @@ public final class PingService extends Service {
             finishOutage(before.downMs, reason);
             publishAlert(before, true, false);
             warningActive = false;
+            outageStartedWall = -1;
         }
         PingState.INSTANCE.stop();
         if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
@@ -238,27 +244,36 @@ public final class PingService extends Service {
                 seconds / 3600L, (seconds / 60L) % 60L, seconds % 60L);
     }
 
-    private Notification monitorNotice(String details) {
+    private Notification monitorNotice(String details, boolean disconnected) {
         Intent stop = new Intent(this, PingService.class).setAction(ACTION_STOP);
         PendingIntent stopAction = PendingIntent.getService(this, 101, stop,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-        return new Notification.Builder(this, MONITOR_CHANNEL)
+        Notification.Builder builder = new Notification.Builder(this, MONITOR_CHANNEL)
                 .setSmallIcon(R.drawable.ic_launcher)
-                .setContentTitle("MT_PING • مراقبة الاتصال")
+                .setContentTitle(disconnected ? "MT_PING • الاتصال منقطع" : "MT_PING • مراقبة الاتصال")
                 .setContentText(details)
                 .setStyle(new Notification.BigTextStyle().bigText(details))
                 .setContentIntent(openIntent())
                 .setOngoing(true)
                 .setOnlyAlertOnce(true)
-                .setShowWhen(false)
-                .setColor(0xFF3EDAB6)
+                .setColor(disconnected ? 0xFFFF6278 : 0xFF3EDAB6)
                 .addAction(new Notification.Action.Builder(
-                        android.R.drawable.ic_media_pause, "إيقاف الفحص", stopAction).build())
-                .build();
+                        android.R.drawable.ic_media_pause, "إيقاف الفحص", stopAction).build());
+        if (disconnected) {
+            // SystemUI increments this time itself even when Android throttles
+            // NotificationManager.notify(), the screen is off, or Activity is paused.
+            long started = outageStartedWall > 0 ? outageStartedWall :
+                    Math.max(1L, System.currentTimeMillis() - PingState.INSTANCE.snapshot().downMs);
+            builder.setWhen(started).setShowWhen(true)
+                    .setUsesChronometer(true).setChronometerCountDown(false);
+        } else {
+            builder.setShowWhen(false).setUsesChronometer(false);
+        }
+        return builder.build();
     }
 
     private void startForegroundNow(String details) {
-        Notification notification = monitorNotice(details);
+        Notification notification = monitorNotice(details, false);
         if (Build.VERSION.SDK_INT >= 34) {
             startForeground(MONITOR_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
         } else {
@@ -270,7 +285,7 @@ public final class PingService extends Service {
         PingSample last = snapshot.last();
         String details;
         if (snapshot.isDown()) {
-            details = "منقطع منذ " + asClock(snapshot.downMs) + " • " + snapshot.host;
+            details = "منقطع منذ " + asClock(snapshot.downMs) + " • " + snapshot.host + " • العداد المباشر بجانب الإشعار";
         } else if (last != null && last.kind == PingSample.Kind.REPLY) {
             details = String.format(Locale.US, "متصل • %.2f مللي ثانية • %s", last.rttMs, snapshot.host);
         } else if (last != null && last.kind == PingSample.Kind.ERROR) {
@@ -281,7 +296,7 @@ public final class PingService extends Service {
         if (lastCompletedMs >= 0) {
             details += " • آخر فصل: " + asClock(lastCompletedMs);
         }
-        notificationManager().notify(MONITOR_ID, monitorNotice(details));
+        notificationManager().notify(MONITOR_ID, monitorNotice(details, snapshot.isDown()));
     }
 
     private void publishAlert(PingState.Snapshot snapshot, boolean closed, boolean newAlert) {
@@ -309,10 +324,19 @@ public final class PingService extends Service {
                 .setAutoCancel(true)
                 .setOnlyAlertOnce(true)
                 .setShowWhen(true)
-                .setWhen(System.currentTimeMillis())
                 .setColor(closed ? 0xFF3EDAB6 : 0xFFFF6278)
                 .setCategory(Notification.CATEGORY_STATUS);
-        // Existing channel importance triggers the alert only on the first transition.
+        if (!closed) {
+            long started = outageStartedWall > 0 ? outageStartedWall :
+                    Math.max(1L, System.currentTimeMillis() - snapshot.downMs);
+            builder.setWhen(started).setShowWhen(true)
+                    .setUsesChronometer(true).setChronometerCountDown(false);
+        } else {
+            builder.setWhen(System.currentTimeMillis()).setShowWhen(true)
+                    .setUsesChronometer(false);
+        }
+        // The high-importance channel alerts on the transition. Subsequent
+        // updates are silent; the Android system chronometer keeps counting.
         notificationManager().notify(ALERT_ID, builder.build());
     }
 

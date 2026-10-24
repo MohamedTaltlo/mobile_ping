@@ -6,6 +6,13 @@ Native Android ICMP monitoring app, inspired by Termux ping output. Foreground b
 
 See the source and [build workflow](.github/workflows/android.yml). The APK is a debug-signed sideload build; it is not a Play Store release.
 
+## التحديث 1.1.2
+
+- تحسين الترويسة على Android 15+ باحترام مساحات شريط الحالة والقطع العلوي.
+- رسم بياني أكثر وضوحاً لآخر 60 نبضة مع محور ms وقياس ديناميكي وإظهار البينغ الأخير.
+- عداد فصل من نظام Android نفسه (Notification Chronometer) يظهر أثناء الانقطاع حتى لو تأخر تحديث إشعار التطبيق.
+- دون تغيير محرك ICMP أو قاعدة بيانات سجل الانقطاعات.
+
 ## التحديث 1.1.0
 
 - واجهة عربية بالكامل باتجاه من اليمين إلى اليسار (RTL).
