@@ -73,15 +73,21 @@ jobs:
       - name: Publish MT_PING release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.0.1
-          name: MT_PING v1.0.1
+          tag_name: v1.1.0
+          name: MT_PING v1.1.0
           target_commitish: ${{ github.sha }}
           body: |
-            Android 8.0+ debug-signed APK.
-            Preset targets: 10.0.0.1, 8.8.8.8, www.google.com.
-            Foreground ICMP monitor, per-packet results, outage timer,
-            local CSV logs and packet statistics.
-            Android can still stop background monitoring under certain battery policies.
+            **MT_PING 1.1.0 • واجهة عربية RTL**
+
+            - إشعار تنبيه عند بدء كل انقطاع.
+            - عدّاد الفصل يتجدد كل ثانية بلوحة الإشعارات.
+            - عرض مدة آخر فصل بعد عودة الاتصال.
+            - حفظ جميع مرات الفصل في SQLite مع التاريخ والمدة والحالة.
+            - تصدير سجل الانقطاعات كاملاً إلى CSV.
+            - مراقبة ICMP بالخلفية باستخدام Foreground Service.
+            - عناوين جاهزة: 10.0.0.1 و 8.8.8.8 و www.google.com.
+
+            APK موقّع بتوقيع اختبار آلي، مناسب للتثبيت المباشر وليس إصدار Play Store.
           files: MT_PING.apk
           fail_on_unmatched_files: true
           overwrite_files: true

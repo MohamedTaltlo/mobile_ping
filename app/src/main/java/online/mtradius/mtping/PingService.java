@@ -9,37 +9,77 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ServiceInfo;
 import android.os.Build;
+import android.os.Handler;
 import android.os.IBinder;
+import android.os.Looper;
 import android.os.PowerManager;
 import android.os.SystemClock;
 import java.util.Locale;
 import java.util.concurrent.atomic.AtomicInteger;
 
+/**
+ * Foreground ICMP worker with a once-per-outage warning and a 1-second notification timer.
+ * Duration is measured with monotonic elapsedRealtime(), not the changeable wall clock.
+ */
 public final class PingService extends Service {
     static final String ACTION_START = "online.mtradius.mtping.START";
     static final String ACTION_STOP = "online.mtradius.mtping.STOP";
     static final String EXTRA_HOST = "host";
     static final String EXTRA_INTERVAL = "interval";
-    private static final String CHANNEL_ID = "mt_ping_monitor_v1";
-    private static final int NOTIFICATION_ID = 488;
+
+    private static final String MONITOR_CHANNEL = "mt_ping_monitor_v2";
+    private static final String ALERT_CHANNEL = "mt_ping_disconnect_v1";
+    private static final int MONITOR_ID = 488;
+    private static final int ALERT_ID = 489;
+
     private final AtomicInteger epoch = new AtomicInteger();
+    private final Handler handler = new Handler(Looper.getMainLooper());
     private volatile Thread worker;
     private PowerManager.WakeLock wakeLock;
+    private OutageStore outageStore;
+    private volatile long activeOutageId = -1;
+    private volatile long lastCompletedMs = -1;
+    private volatile boolean warningActive;
+
+    private final Runnable notificationTicker = new Runnable() {
+        @Override public void run() {
+            PingState.Snapshot snapshot = PingState.INSTANCE.snapshot();
+            if (!snapshot.running) return;
+            if (snapshot.isDown()) {
+                long now = System.currentTimeMillis();
+                if (activeOutageId > 0) {
+                    outageStore.heartbeat(activeOutageId, now, snapshot.downMs);
+                }
+                publishMonitor(snapshot);
+                if (warningActive) publishAlert(snapshot, false, false);
+            }
+            handler.postDelayed(this, 1000L);
+        }
+    };
 
     @Override public void onCreate() {
         super.onCreate();
-        NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
-        NotificationChannel channel = new NotificationChannel(CHANNEL_ID, "MT_PING monitoring",
-                NotificationManager.IMPORTANCE_LOW);
-        channel.setDescription("Ongoing foreground ICMP monitor");
-        channel.setShowBadge(false);
-        nm.createNotificationChannel(channel);
+        outageStore = new OutageStore(this);
+        outageStore.closeInterrupted();
+        NotificationManager manager = notificationManager();
+
+        NotificationChannel monitor = new NotificationChannel(
+                MONITOR_CHANNEL, "MT_PING • المراقبة المستمرة", NotificationManager.IMPORTANCE_LOW);
+        monitor.setDescription("إظهار حالة الاتصال ومدة الانقطاع بشكل مباشر");
+        monitor.setShowBadge(false);
+        manager.createNotificationChannel(monitor);
+
+        NotificationChannel alert = new NotificationChannel(
+                ALERT_CHANNEL, "MT_PING • تنبيهات انقطاع الاتصال", NotificationManager.IMPORTANCE_HIGH);
+        alert.setDescription("تنبيه عند فقد الاتصال بالعنوان الجاري فحصه");
+        alert.enableVibration(true);
+        manager.createNotificationChannel(alert);
     }
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
         String action = intent == null ? null : intent.getAction();
         if (ACTION_STOP.equals(action)) {
-            stopMonitor(true);
+            stopMonitor("stopped", true);
             stopSelf();
             return START_NOT_STICKY;
         }
@@ -50,13 +90,14 @@ public final class PingService extends Service {
                 stopSelf();
                 return START_NOT_STICKY;
             }
-            interval = (interval == 1000 || interval == 2000 || interval == 5000) ? interval : 1000;
+            if (interval != 1000 && interval != 2000 && interval != 5000) interval = 1000;
             getSharedPreferences("settings", MODE_PRIVATE).edit()
                     .putString("host", host).putInt("interval", interval)
                     .putBoolean("active", true).apply();
             startMonitor(host, interval);
             return START_STICKY;
         }
+        // Android may re-create the service following process eviction.
         if (getSharedPreferences("settings", MODE_PRIVATE).getBoolean("active", false)) {
             String host = getSharedPreferences("settings", MODE_PRIVATE).getString("host", "10.0.0.1");
             int interval = getSharedPreferences("settings", MODE_PRIVATE).getInt("interval", 1000);
@@ -75,39 +116,64 @@ public final class PingService extends Service {
         return !host.endsWith(".") && !host.contains("..");
     }
 
+    private NotificationManager notificationManager() {
+        return (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+    }
+
     private void startMonitor(final String host, final int intervalMillis) {
         final int generation = epoch.incrementAndGet();
-        Thread prev = worker;
-        if (prev != null) prev.interrupt();
-
+        Thread previous = worker;
+        if (previous != null) previous.interrupt();
+        // Finish a previous measurement rather than silently losing an open outage.
+        if (activeOutageId > 0) finishOutage(PingState.INSTANCE.snapshot().downMs, "stopped");
         PingState.INSTANCE.start(host);
-        startForegroundNow("Starting ICMP probe to " + host);
-        holdCpu();
-        final PingLog log = new PingLog(this);
+        OutageStore.Entry latest = outageStore.latest(host);
+        lastCompletedMs = latest == null ? -1 : latest.durationMs;
+        activeOutageId = -1;
+        warningActive = false;
+        notificationManager().cancel(ALERT_ID);
+        startForegroundNow("بدء فحص " + host);
+        acquireCpu();
+
+        final PingLog csv = new PingLog(this);
         Thread thread = new Thread(() -> {
-            long seq = 0;
-            long next = SystemClock.elapsedRealtime();
+            long sequence = 0;
+            long nextAt = SystemClock.elapsedRealtime();
             while (generation == epoch.get() && !Thread.currentThread().isInterrupted()) {
                 PingSample sample;
                 try {
-                    sample = PingRunner.probe(host, ++seq);
-                } catch (InterruptedException ex) {
+                    sample = PingRunner.probe(host, ++sequence);
+                } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     break;
                 }
                 if (generation != epoch.get()) break;
-                PingState.INSTANCE.record(sample);
-                log.append(host, sample);
-                refreshNotification();
 
-                next += intervalMillis;
+                PingState.Snapshot before = PingState.INSTANCE.snapshot();
+                PingState.INSTANCE.record(sample);
+                PingState.Snapshot after = PingState.INSTANCE.snapshot();
+
+                csv.append(host, sample);
+                if (!before.isDown() && after.isDown()) {
+                    activeOutageId = outageStore.begin(host, System.currentTimeMillis());
+                    warningActive = true;
+                    publishAlert(after, false, true);
+                } else if (before.isDown() && !after.isDown() && activeOutageId > 0) {
+                    long duration = lastOutageDuration(after, before.downMs);
+                    finishOutage(duration, sample.kind == PingSample.Kind.REPLY ? "recovered" : "error");
+                    if (warningActive) publishAlert(after, true, false);
+                    warningActive = false;
+                }
+                publishMonitor(after);
+
+                nextAt += intervalMillis;
                 long now = SystemClock.elapsedRealtime();
-                if (next < now) next = now;
-                long wait = next - now;
-                if (wait > 0) {
+                if (nextAt < now) nextAt = now;
+                long sleep = nextAt - now;
+                if (sleep > 0) {
                     try {
-                        Thread.sleep(wait);
-                    } catch (InterruptedException ex) {
+                        Thread.sleep(sleep);
+                    } catch (InterruptedException e) {
                         Thread.currentThread().interrupt();
                         break;
                     }
@@ -116,78 +182,143 @@ public final class PingService extends Service {
         }, "MT_PING-ICMP");
         worker = thread;
         thread.start();
+        handler.removeCallbacks(notificationTicker);
+        handler.postDelayed(notificationTicker, 1000L);
     }
 
-    private void holdCpu() {
+    private static long lastOutageDuration(PingState.Snapshot after, long fallback) {
+        if (after.outages.isEmpty()) return fallback;
+        return after.outages.get(after.outages.size() - 1).durationMs;
+    }
+
+    private void finishOutage(long duration, String reason) {
+        if (activeOutageId <= 0) return;
+        outageStore.finish(activeOutageId, System.currentTimeMillis(), duration, reason);
+        lastCompletedMs = duration;
+        activeOutageId = -1;
+    }
+
+    private void acquireCpu() {
         if (wakeLock == null) {
-            PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
-            wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "MT_PING:ActiveICMP");
+            PowerManager manager = (PowerManager) getSystemService(Context.POWER_SERVICE);
+            wakeLock = manager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "MT_PING:ContinuousICMP");
             wakeLock.setReferenceCounted(false);
         }
         if (!wakeLock.isHeld()) wakeLock.acquire();
     }
 
-    private void stopMonitor(boolean userStop) {
+    private void stopMonitor(String reason, boolean userStop) {
         epoch.incrementAndGet();
+        handler.removeCallbacks(notificationTicker);
         Thread thread = worker;
         worker = null;
         if (thread != null) thread.interrupt();
+        PingState.Snapshot before = PingState.INSTANCE.snapshot();
+        if (activeOutageId > 0) {
+            finishOutage(before.downMs, reason);
+            publishAlert(before, true, false);
+            warningActive = false;
+        }
         PingState.INSTANCE.stop();
         if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
-        if (userStop) getSharedPreferences("settings", MODE_PRIVATE).edit().putBoolean("active", false).apply();
+        if (userStop) getSharedPreferences("settings", MODE_PRIVATE)
+                .edit().putBoolean("active", false).apply();
     }
 
-    private Notification makeNotification(String status) {
+    private PendingIntent openIntent() {
         Intent open = new Intent(this, MainActivity.class)
                 .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
-        PendingIntent openIntent = PendingIntent.getActivity(this, 100, open,
+        return PendingIntent.getActivity(this, 100, open,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+    }
+
+    static String asClock(long durationMs) {
+        long seconds = Math.max(0L, durationMs / 1000L);
+        return String.format(Locale.US, "%02d:%02d:%02d",
+                seconds / 3600L, (seconds / 60L) % 60L, seconds % 60L);
+    }
+
+    private Notification monitorNotice(String details) {
         Intent stop = new Intent(this, PingService.class).setAction(ACTION_STOP);
-        PendingIntent stopIntent = PendingIntent.getService(this, 101, stop,
+        PendingIntent stopAction = PendingIntent.getService(this, 101, stop,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-        return new Notification.Builder(this, CHANNEL_ID)
+        return new Notification.Builder(this, MONITOR_CHANNEL)
                 .setSmallIcon(R.drawable.ic_launcher)
-                .setContentTitle("MT_PING • Live Monitor")
-                .setContentText(status)
-                .setStyle(new Notification.BigTextStyle().bigText(status))
-                .setContentIntent(openIntent)
+                .setContentTitle("MT_PING • مراقبة الاتصال")
+                .setContentText(details)
+                .setStyle(new Notification.BigTextStyle().bigText(details))
+                .setContentIntent(openIntent())
                 .setOngoing(true)
                 .setOnlyAlertOnce(true)
                 .setShowWhen(false)
                 .setColor(0xFF3EDAB6)
                 .addAction(new Notification.Action.Builder(
-                        android.R.drawable.ic_media_pause, "Stop", stopIntent).build())
+                        android.R.drawable.ic_media_pause, "إيقاف الفحص", stopAction).build())
                 .build();
     }
 
-    private void startForegroundNow(String status) {
-        Notification notice = makeNotification(status);
+    private void startForegroundNow(String details) {
+        Notification notification = monitorNotice(details);
         if (Build.VERSION.SDK_INT >= 34) {
-            startForeground(NOTIFICATION_ID, notice, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
+            startForeground(MONITOR_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
         } else {
-            startForeground(NOTIFICATION_ID, notice);
+            startForeground(MONITOR_ID, notification);
         }
     }
 
-    private void refreshNotification() {
-        PingState.Snapshot snap = PingState.INSTANCE.snapshot();
-        PingSample last = snap.last();
-        if (last == null) return;
-        String message;
-        if (last.kind == PingSample.Kind.REPLY) {
-            message = String.format(Locale.US, "%s • %.2f ms • loss %.1f%%",
-                    snap.host, last.rttMs, snap.sent == 0 ? 0 : (snap.lost * 100.0 / snap.sent));
-        } else if (last.kind == PingSample.Kind.TIMEOUT) {
-            message = snap.host + " • DOWN " + (snap.downMs / 1000) + "s • loss " + snap.lost;
+    private void publishMonitor(PingState.Snapshot snapshot) {
+        PingSample last = snapshot.last();
+        String details;
+        if (snapshot.isDown()) {
+            details = "منقطع منذ " + asClock(snapshot.downMs) + " • " + snapshot.host;
+        } else if (last != null && last.kind == PingSample.Kind.REPLY) {
+            details = String.format(Locale.US, "متصل • %.2f مللي ثانية • %s", last.rttMs, snapshot.host);
+        } else if (last != null && last.kind == PingSample.Kind.ERROR) {
+            details = "تعذّر إجراء الفحص • " + snapshot.host;
         } else {
-            message = snap.host + " • ERROR: " + last.detail;
+            details = "جاري فحص " + snapshot.host;
         }
-        ((NotificationManager) getSystemService(NOTIFICATION_SERVICE))
-                .notify(NOTIFICATION_ID, makeNotification(message));
+        if (lastCompletedMs >= 0) {
+            details += " • آخر فصل: " + asClock(lastCompletedMs);
+        }
+        notificationManager().notify(MONITOR_ID, monitorNotice(details));
+    }
+
+    private void publishAlert(PingState.Snapshot snapshot, boolean closed, boolean newAlert) {
+        String title;
+        String text;
+        if (!closed) {
+            title = "انقطاع الاتصال • MT_PING";
+            text = "العنوان: " + snapshot.host + " • مدة الفصل: " + asClock(snapshot.downMs);
+        } else {
+            title = "انتهت متابعة الانقطاع • MT_PING";
+            PingSample last = snapshot.last();
+            if (last != null && last.kind == PingSample.Kind.REPLY) {
+                title = "عاد الاتصال • MT_PING";
+            }
+            text = "العنوان: " + snapshot.host + " • آخر فصل استمر: " +
+                    asClock(Math.max(0L, lastCompletedMs));
+        }
+        if (newAlert) notificationManager().cancel(ALERT_ID);
+        Notification.Builder builder = new Notification.Builder(this, ALERT_CHANNEL)
+                .setSmallIcon(R.drawable.ic_launcher)
+                .setContentTitle(title)
+                .setContentText(text)
+                .setStyle(new Notification.BigTextStyle().bigText(text))
+                .setContentIntent(openIntent())
+                .setAutoCancel(true)
+                .setOnlyAlertOnce(true)
+                .setShowWhen(true)
+                .setWhen(System.currentTimeMillis())
+                .setColor(closed ? 0xFF3EDAB6 : 0xFFFF6278)
+                .setCategory(Notification.CATEGORY_STATUS);
+        // Existing channel importance triggers the alert only on the first transition.
+        notificationManager().notify(ALERT_ID, builder.build());
     }
 
     @Override public void onDestroy() {
-        stopMonitor(false);
+        stopMonitor("interrupted", false);
+        if (outageStore != null) outageStore.close();
         super.onDestroy();
     }
 

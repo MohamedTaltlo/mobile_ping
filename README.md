@@ -1,10 +1,21 @@
-# MT_PING
+# MT_PING — المراقبة الاحترافية للاتصال
 
 Native Android ICMP monitoring app, inspired by Termux ping output. Foreground background monitor, per-packet history, outage timer, local CSV log and Android notification.
 
 **Android:** 8.0+ · **Target:** Android 15 · **Build:** GitHub Actions `Android APK` produces `MT_PING.apk` in GitHub Releases and workflow artifacts.
 
 See the source and [build workflow](.github/workflows/android.yml). The APK is a debug-signed sideload build; it is not a Play Store release.
+
+## التحديث 1.1.0
+
+- واجهة عربية بالكامل باتجاه من اليمين إلى اليسار (RTL).
+- إرسال تنبيه عالي الأولوية عند فقد الاتصال لأول مرة في كل فترة انقطاع.
+- تحديث مدة الفصل كل ثانية في الإشعار الدائم وتنبيه الفصل.
+- عرض مدة آخر فصل بعد استعادة الاتصال بدون فتح التطبيق.
+- حفظ كل مرة انقطاع وتاريخها ومدتها ونتيجتها في قاعدة SQLite داخل التطبيق.
+- إظهار سجل الفصل وصدّره بتنسيق CSV عربي (UTF-8).
+- فصل واضح بين عودة الاتصال وأخطاء أدوات الفحص أو توقف المراقبة.
+- الإشعارات تتطلب السماح بها على Android 13+ وقد تمنع إعدادات البطارية عمل التطبيق بالخلفية على بعض الأجهزة.
 
 ## Behavior
 

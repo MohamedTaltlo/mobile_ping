@@ -38,6 +38,7 @@ public final class MainActivity extends Activity {
     private static final int ORANGE = 0xFFFFC36A;
     private static final int[] INTERVALS = {1000, 2000, 5000};
     private static final int SAVE_CSV = 515;
+    private static final int SAVE_OUTAGES = 516;
     private final Handler ui = new Handler(Looper.getMainLooper());
     private final Runnable refresh = new Runnable() {
         @Override public void run() {
@@ -53,18 +54,21 @@ public final class MainActivity extends Activity {
     private LatencyGraphView graph;
     private int intervalIndex;
     private long lastRevision = Long.MIN_VALUE;
+    private OutageStore outageStore;
     private boolean lastRunning;
 
     @Override public void onCreate(Bundle saved) {
         super.onCreate(saved);
         getWindow().setStatusBarColor(BG);
         getWindow().setNavigationBarColor(BG);
+        getWindow().getDecorView().setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+        outageStore = new OutageStore(this);
         buildUI();
         String host = getSharedPreferences("settings", MODE_PRIVATE).getString("host", "10.0.0.1");
         hostInput.setText(host);
         int interval = getSharedPreferences("settings", MODE_PRIVATE).getInt("interval", 1000);
         intervalIndex = interval == 5000 ? 2 : interval == 2000 ? 1 : 0;
-        intervalButton.setText(INTERVALS[intervalIndex] / 1000 + "s");
+        intervalButton.setText(INTERVALS[intervalIndex] / 1000 + " ث");
         if (Build.VERSION.SDK_INT >= 33 &&
                 checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 77);
@@ -120,29 +124,34 @@ public final class MainActivity extends Activity {
         ScrollView scrolling = new ScrollView(this);
         scrolling.setFillViewport(true);
         scrolling.setBackgroundColor(BG);
+        scrolling.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
         setContentView(scrolling);
         LinearLayout root = vertical();
         root.setPadding(dp(18), dp(18), dp(18), dp(28));
+        root.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
         scrolling.addView(root);
 
         LinearLayout header = horizontal();
         TextView brand = txt("MT_PING", 25, WHITE, true);
         brand.setLetterSpacing(.10f);
         header.addView(brand, new LinearLayout.LayoutParams(0, -2, 1));
-        statusText = txt("●  IDLE", 12, MUTED, true);
+        statusText = txt("●  متوقف", 12, MUTED, true);
         statusText.setPadding(dp(12), dp(9), dp(12), dp(9));
         statusText.setBackground(shape(CARD, BORDER, 30));
         header.addView(statusText);
         root.addView(header);
-        root.addView(txt("ICMP NETWORK MONITOR  /  1.0.0", 10, MUTED, true), margin(-1, -2, 2, 16));
+        root.addView(txt("مراقبة الشبكة لحظة بلحظة • الإصدار 1.1.0", 10, MUTED, true), margin(-1, -2, 2, 16));
 
         LinearLayout target = vertical();
         target.setPadding(dp(16), dp(14), dp(16), dp(16));
         target.setBackground(shape(CARD, BORDER, 18));
-        target.addView(txt("TARGET HOST / IP", 11, MUTED, true));
+        target.addView(txt("عنوان الجهاز أو الموقع المراد فحصه", 11, MUTED, true));
         LinearLayout fields = horizontal();
         hostInput = new EditText(this);
         hostInput.setSingleLine(true);
+        hostInput.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
+        hostInput.setTextDirection(View.TEXT_DIRECTION_LTR);
+        hostInput.setGravity(Gravity.LEFT | Gravity.CENTER_VERTICAL);
         hostInput.setTextSize(17);
         hostInput.setTypeface(Typeface.MONOSPACE);
         hostInput.setTextColor(WHITE);
@@ -162,14 +171,14 @@ public final class MainActivity extends Activity {
         fields.addView(intervalButton, new LinearLayout.LayoutParams(dp(68), dp(52)));
         intervalButton.setOnClickListener(v -> {
             if (PingState.INSTANCE.snapshot().running) {
-                Toast.makeText(this, "Stop monitoring to change interval", Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, "أوقف المراقبة لتغيير مدة النبضة", Toast.LENGTH_SHORT).show();
                 return;
             }
             intervalIndex = (intervalIndex + 1) % INTERVALS.length;
-            intervalButton.setText(INTERVALS[intervalIndex] / 1000 + "s");
+            intervalButton.setText(INTERVALS[intervalIndex] / 1000 + " ث");
         });
         target.addView(fields, margin(-1, -2, 8, 0));
-        target.addView(txt("QUICK TARGETS", 10, MUTED, true), margin(-1, -2, 13, 7));
+        target.addView(txt("عناوين جاهزة", 10, MUTED, true), margin(-1, -2, 13, 7));
         LinearLayout presets = horizontal();
         String[] defaultTargets = {"10.0.0.1", "8.8.8.8", "www.google.com"};
         for (int i = 0; i < defaultTargets.length; i++) {
@@ -184,7 +193,7 @@ public final class MainActivity extends Activity {
             presets.addView(option, pp);
             option.setOnClickListener(v -> {
                 if (PingState.INSTANCE.snapshot().running) {
-                    Toast.makeText(this, "Stop monitoring to change target", Toast.LENGTH_SHORT).show();
+                    Toast.makeText(this, "أوقف المراقبة لتغيير العنوان", Toast.LENGTH_SHORT).show();
                 } else {
                     hostInput.setText(item);
                     hostInput.setSelection(item.length());
@@ -197,7 +206,7 @@ public final class MainActivity extends Activity {
         LinearLayout actions = horizontal();
         startButton = new Button(this);
         startButton.setAllCaps(false);
-        startButton.setText("▶  START MONITOR");
+        startButton.setText("▶  بدء المراقبة");
         startButton.setTextColor(BG);
         startButton.setTextSize(14);
         startButton.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
@@ -209,7 +218,7 @@ public final class MainActivity extends Activity {
 
         Button exportButton = new Button(this);
         exportButton.setAllCaps(false);
-        exportButton.setText("↓ CSV");
+        exportButton.setText("↓ تصدير السجل");
         exportButton.setTextColor(WHITE);
         exportButton.setTextSize(13);
         exportButton.setBackground(shape(CARD, BORDER, 14));
@@ -220,36 +229,36 @@ public final class MainActivity extends Activity {
         LinearLayout hero = vertical();
         hero.setPadding(dp(20), dp(18), dp(20), dp(17));
         hero.setBackground(shape(CARD, BORDER, 20));
-        hero.addView(txt("LIVE LATENCY", 11, MUTED, true));
+        hero.addView(txt("زمن الاستجابة الحالي", 11, MUTED, true));
         heroText = txt("—", 46, GREEN, true);
         heroText.setTypeface(Typeface.create("sans-serif-light", Typeface.BOLD));
         hero.addView(heroText, margin(-1, -2, 4, 0));
-        heroDetail = txt("Start monitoring to display each echo reply", 12, MUTED, false);
+        heroDetail = txt("ابدأ المراقبة لعرض نتيجة كل نبضة", 12, MUTED, false);
         hero.addView(heroDetail);
         TextView divider = txt("────────────────────────────", 14, BORDER, false);
         divider.setSingleLine(true);
         hero.addView(divider, margin(-1, -2, 14, 8));
         LinearLayout outageRow = horizontal();
-        outageRow.addView(txt("CURRENT OUTAGE", 11, MUTED, true), new LinearLayout.LayoutParams(0, -2, 1));
+        outageRow.addView(txt("مدة الانقطاع الحالي", 11, MUTED, true), new LinearLayout.LayoutParams(0, -2, 1));
         outageText = txt("00:00:00", 22, GREEN, true);
         outageText.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
         outageRow.addView(outageText);
         hero.addView(outageRow);
         root.addView(hero, margin(-1, -2, 14, 0));
 
-        addHeading(root, "Live statistics");
+        addHeading(root, "إحصائيات الاتصال");
         LinearLayout first = horizontal();
-        stats[0] = statCard(first, "SENT", "0");
-        stats[1] = statCard(first, "RECEIVED", "0");
-        stats[2] = statCard(first, "LOST", "0");
+        stats[0] = statCard(first, "المرسلة", "0");
+        stats[1] = statCard(first, "المستلمة", "0");
+        stats[2] = statCard(first, "المفقودة", "0");
         root.addView(first);
         LinearLayout second = horizontal();
-        stats[3] = statCard(second, "LOSS", "0.0%");
-        stats[4] = statCard(second, "AVG RTT", "—");
-        stats[5] = statCard(second, "JITTER", "—");
+        stats[3] = statCard(second, "نسبة الفقد", "0.0%");
+        stats[4] = statCard(second, "متوسط البينغ", "—");
+        stats[5] = statCard(second, "التذبذب", "—");
         root.addView(second, margin(-1, -2, 9, 0));
 
-        addHeading(root, "Latency timeline");
+        addHeading(root, "الرسم البياني للاستجابة");
         LinearLayout graphCard = vertical();
         graphCard.setPadding(dp(10), dp(8), dp(10), dp(8));
         graphCard.setBackground(shape(CARD, BORDER, 18));
@@ -257,21 +266,31 @@ public final class MainActivity extends Activity {
         graphCard.addView(graph, new LinearLayout.LayoutParams(-1, dp(160)));
         root.addView(graphCard);
 
-        addHeading(root, "Outage history");
-        outageHistory = txt("No outages recorded in this session.", 12, MUTED, false);
+        addHeading(root, "سجل جميع مرات الفصل");
+        outageHistory = txt("لم يتم تسجيل أي انقطاع حتى الآن.", 12, MUTED, false);
         outageHistory.setPadding(dp(15), dp(12), dp(15), dp(12));
         outageHistory.setBackground(shape(CARD, BORDER, 16));
         root.addView(outageHistory);
+        outageHistory.setTextIsSelectable(true);
 
-        addHeading(root, "Packet-by-packet log");
-        logText = txt("Waiting for ICMP responses…", 12, GREEN, false);
+        Button outageExportButton = new Button(this);
+        outageExportButton.setAllCaps(false);
+        outageExportButton.setText("↓ تصدير سجل الفصل الكامل CSV");
+        outageExportButton.setTextColor(GREEN);
+        outageExportButton.setBackground(shape(CARD, BORDER, 12));
+        root.addView(outageExportButton, margin(-1, dp(48), 8, 0));
+        outageExportButton.setOnClickListener(v -> exportOutages());
+
+        addHeading(root, "نتائج النبضات بالتفصيل");
+        logText = txt("بانتظار نتائج النبضات...", 12, GREEN, false);
         logText.setTypeface(Typeface.MONOSPACE);
-        logText.setTextDirection(View.TEXT_DIRECTION_LTR);
+        logText.setTextDirection(View.TEXT_DIRECTION_RTL);
+        logText.setGravity(Gravity.RIGHT);
         logText.setPadding(dp(13), dp(14), dp(13), dp(14));
         logText.setBackground(shape(0xFF030D16, BORDER, 16));
         logText.setTextIsSelectable(true);
         root.addView(logText);
-        TextView foot = txt("MT_RADIUS  •  Foreground ICMP monitoring  •  Android 8+", 10, MUTED, false);
+        TextView foot = txt("MT_RADIUS • مراقبة مستمرة بالخلفية", 10, MUTED, false);
         foot.setGravity(Gravity.CENTER);
         root.addView(foot, margin(-1, -2, 22, 0));
     }
@@ -298,7 +317,7 @@ public final class MainActivity extends Activity {
         }
         String target = hostInput.getText().toString().trim();
         if (!PingService.validTarget(target)) {
-            hostInput.setError("Enter a valid IPv4 address or domain name");
+            hostInput.setError("أدخل عنوان IP أو اسم موقع صحيح");
             hostInput.requestFocus();
             return;
         }
@@ -309,7 +328,7 @@ public final class MainActivity extends Activity {
         try {
             startForegroundService(start);
         } catch (Exception e) {
-            Toast.makeText(this, "Unable to start monitor: " + e.getMessage(), Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "تعذّر بدء المراقبة: " + e.getMessage(), Toast.LENGTH_LONG).show();
         }
     }
 
@@ -319,35 +338,35 @@ public final class MainActivity extends Activity {
         lastRunning = s.running;
         boolean down = s.running && s.isDown();
         boolean error = s.running && last != null && last.kind == PingSample.Kind.ERROR;
-        statusText.setText(s.running ? (down ? "●  DOWN" : error ? "●  ERROR" : "●  LIVE") : "●  IDLE");
+        statusText.setText(s.running ? (down ? "●  منقطع" : error ? "●  خطأ" : "●  متصل") : "●  متوقف");
         statusText.setTextColor(down ? RED : error ? ORANGE : s.running ? GREEN : MUTED);
-        startButton.setText(s.running ? "■  STOP MONITOR" : "▶  START MONITOR");
+        startButton.setText(s.running ? "■  إيقاف المراقبة" : "▶  بدء المراقبة");
         startButton.setTextColor(s.running ? WHITE : BG);
         startButton.setBackground(shape(s.running ? 0xFFB33B50 : GREEN, 0, 14));
         hostInput.setEnabled(!s.running);
         intervalButton.setEnabled(!s.running);
         if (!s.running && last == null) {
             heroText.setText("—");
-            heroDetail.setText("Start monitoring to display each echo reply");
+            heroDetail.setText("ابدأ المراقبة لعرض نتيجة كل نبضة");
             heroText.setTextColor(GREEN);
         } else if (down) {
-            heroText.setText("TIMEOUT");
+            heroText.setText("منقطع");
             heroText.setTextSize(40);
             heroText.setTextColor(RED);
-            heroDetail.setText("No ICMP response from " + s.host);
+            heroDetail.setText("لا توجد استجابة من " + s.host);
         } else if (error) {
-            heroText.setText("ERROR");
+            heroText.setText("خطأ الفحص");
             heroText.setTextSize(40);
             heroText.setTextColor(ORANGE);
             heroDetail.setText(last.detail);
         } else if (last != null && last.kind == PingSample.Kind.REPLY) {
             heroText.setTextSize(46);
-            heroText.setText(String.format(Locale.US, "%.2f ms", last.rttMs));
+            heroText.setText(String.format(Locale.US, "%.2f مللي ثانية", last.rttMs));
             heroText.setTextColor(GREEN);
-            heroDetail.setText("seq=" + last.sequence + "   ttl=" + last.ttl + "   •   " + s.host);
+            heroDetail.setText("النبضة رقم " + last.sequence + "   TTL=" + last.ttl + "   •   " + s.host);
         } else {
             heroText.setText("—");
-            heroDetail.setText("Waiting for the first ICMP echo");
+            heroDetail.setText("بانتظار أول نبضة فحص");
         }
         long outage = down ? s.downMs : 0;
         outageText.setText(duration(outage));
@@ -357,8 +376,8 @@ public final class MainActivity extends Activity {
         stats[2].setText(Long.toString(s.lost));
         stats[2].setTextColor(s.lost > 0 ? RED : WHITE);
         stats[3].setText(String.format(Locale.US, "%.1f%%", s.sent == 0 ? 0 : s.lost * 100.0 / s.sent));
-        stats[4].setText(s.received == 0 ? "—" : String.format(Locale.US, "%.1f ms", s.avgRtt));
-        stats[5].setText(s.received < 2 ? "—" : String.format(Locale.US, "%.1f ms", s.jitter));
+        stats[4].setText(s.received == 0 ? "—" : String.format(Locale.US, "%.1f ملث", s.avgRtt));
+        stats[5].setText(s.received < 2 ? "—" : String.format(Locale.US, "%.1f ملث", s.jitter));
         if (lastRevision != s.revision) {
             lastRevision = s.revision;
             graph.setSamples(s.samples);
@@ -374,7 +393,7 @@ public final class MainActivity extends Activity {
 
     private void showPackets(List<PingSample> items) {
         if (items.isEmpty()) {
-            logText.setText("Waiting for ICMP responses…");
+            logText.setText("بانتظار نتائج النبضات...");
             return;
         }
         SimpleDateFormat date = new SimpleDateFormat("HH:mm:ss", Locale.US);
@@ -384,11 +403,11 @@ public final class MainActivity extends Activity {
             buffer.append(date.format(new Date(p.wallTime)))
                     .append("  #").append(p.sequence).append("  ");
             if (p.kind == PingSample.Kind.REPLY) {
-                buffer.append(String.format(Locale.US, "%.2f ms  ttl=%d", p.rttMs, p.ttl));
+                buffer.append(String.format(Locale.US, "%.2f مللي ثانية  TTL=%d", p.rttMs, p.ttl));
             } else if (p.kind == PingSample.Kind.TIMEOUT) {
-                buffer.append("✖ Request timeout");
+                buffer.append("✖ انتهت المهلة دون استجابة");
             } else {
-                buffer.append("! ").append(p.detail);
+                buffer.append("خطأ في الفحص: ").append(p.detail);
             }
             buffer.append('\n');
         }
@@ -396,19 +415,44 @@ public final class MainActivity extends Activity {
     }
 
     private void showOutages(List<PingState.Outage> items, long downTime, long errors) {
-        SimpleDateFormat time = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US);
-        StringBuilder b = new StringBuilder("Accumulated outage: ")
-                .append(duration(downTime)).append("    •    Probe errors: ").append(errors).append("\n");
-        if (items.isEmpty()) {
-            b.append("No completed outages in this session.");
+        SimpleDateFormat time = new SimpleDateFormat("yyyy/MM/dd  HH:mm:ss", Locale.US);
+        List<OutageStore.Entry> history = outageStore.recent(50);
+        StringBuilder b = new StringBuilder();
+        b.append("إجمالي مرات الفصل المسجّلة: ").append(outageStore.count())
+                .append("  •  مدة الفصل بهذه الجلسة: ").append(duration(downTime))
+                .append("  •  أخطاء الفحص: ").append(errors).append("\n");
+        if (history.isEmpty()) {
+            b.append("\nلم يتم تسجيل أي انقطاع حتى الآن.");
         } else {
-            for (int i = items.size() - 1, count = 0; i >= 0 && count < 6; i--, count++) {
-                PingState.Outage o = items.get(i);
-                b.append("\n").append(time.format(new Date(o.startWall)))
-                        .append("    ").append(duration(o.durationMs));
+            int index = 0;
+            for (OutageStore.Entry e : history) {
+                if (++index > 20) break;
+                String cause;
+                if ("active".equals(e.outcome)) cause = "الانقطاع مستمر";
+                else if ("recovered".equals(e.outcome)) cause = "عاد الاتصال";
+                else if ("stopped".equals(e.outcome)) cause = "توقّف الرصد";
+                else if ("error".equals(e.outcome)) cause = "تعذّر الفحص";
+                else cause = "انقطع الرصد قبل التأكد من العودة";
+                long measured = e.durationMs;
+                if (e.active() && PingState.INSTANCE.snapshot().running) {
+                    measured = PingState.INSTANCE.snapshot().downMs;
+                }
+                b.append("\n").append(index).append(" - ").append(e.host)
+                        .append("\n    البداية: ").append(time.format(new Date(e.beganAt)))
+                        .append("\n    المدة: ").append(duration(measured))
+                        .append("  •  ").append(cause).append("\n");
             }
         }
         outageHistory.setText(b.toString());
+    }
+
+    private void exportOutages() {
+        Intent save = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+        save.addCategory(Intent.CATEGORY_OPENABLE);
+        save.setType("text/csv");
+        String date = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date());
+        save.putExtra(Intent.EXTRA_TITLE, "MT_PING_Outages_" + date + ".csv");
+        startActivityForResult(save, SAVE_OUTAGES);
     }
 
     private void exportCSV() {
@@ -422,15 +466,19 @@ public final class MainActivity extends Activity {
 
     @Override protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request, result, data);
-        if (request == SAVE_CSV && result == RESULT_OK && data != null) {
+        if ((request == SAVE_CSV || request == SAVE_OUTAGES) && result == RESULT_OK && data != null) {
             Uri uri = data.getData();
             if (uri == null) return;
             try (OutputStream out = getContentResolver().openOutputStream(uri)) {
-                if (out == null) throw new java.io.IOException("Unable to open selected file");
-                new PingLog(this).exportTo(out);
-                Toast.makeText(this, "Ping history exported", Toast.LENGTH_SHORT).show();
+                if (out == null) throw new java.io.IOException("تعذّر فتح ملف التصدير");
+                if (request == SAVE_CSV) {
+                    new PingLog(this).exportTo(out);
+                } else {
+                    outageStore.exportTo(out);
+                }
+                Toast.makeText(this, "تم تصدير السجل بنجاح", Toast.LENGTH_SHORT).show();
             } catch (Exception e) {
-                Toast.makeText(this, "Export failed: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                Toast.makeText(this, "تعذّر تصدير السجل: " + e.getMessage(), Toast.LENGTH_LONG).show();
             }
         }
     }
@@ -444,5 +492,11 @@ public final class MainActivity extends Activity {
     @Override protected void onPause() {
         ui.removeCallbacks(refresh);
         super.onPause();
+    }
+
+    @Override protected void onDestroy() {
+        ui.removeCallbacks(refresh);
+        if (outageStore != null) outageStore.close();
+        super.onDestroy();
     }
 }
