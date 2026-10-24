@@ -87,13 +87,6 @@ final class UbntDiscovery {
                 for (int i=0;i<size;i++) v=(v << 8)|(data[p+i]&255L);
                 if (v >= 0 && v <= 31536000000L) out.uptime = v;
             }
-            // Some third-party implementations use field 0x0E as uptime in v1.
-            // Only interpret this fallback when length is 4 and 0x0A absent.
-            else if (type == 14 && size == 4 && out.uptime < 0 && data[0] == 1) {
-                long v=0;
-                for(int i=0;i<4;i++) v=(v<<8)|(data[p+i]&255L);
-                if(v <= 31536000000L) out.uptime=v;
-            }
             p += size;
         }
         return any ? out : null;

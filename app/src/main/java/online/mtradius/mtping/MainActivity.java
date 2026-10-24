@@ -143,7 +143,7 @@ public final class MainActivity extends Activity {
 
         LinearLayout header = horizontal();
         header.setMinimumHeight(dp(48));
-        TextView brand = txt("MT_PING", 25, WHITE, true);
+        TextView brand = txt("MT_TOOLS", 25, WHITE, true);
         brand.setLetterSpacing(.10f);
         brand.setSingleLine(true);
         brand.setTextDirection(View.TEXT_DIRECTION_LTR);

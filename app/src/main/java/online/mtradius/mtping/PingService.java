@@ -64,13 +64,13 @@ public final class PingService extends Service {
         NotificationManager manager = notificationManager();
 
         NotificationChannel monitor = new NotificationChannel(
-                MONITOR_CHANNEL, "MT_PING • المراقبة المستمرة", NotificationManager.IMPORTANCE_LOW);
+                MONITOR_CHANNEL, "MT_TOOLS • المراقبة المستمرة", NotificationManager.IMPORTANCE_LOW);
         monitor.setDescription("إظهار حالة الاتصال ومدة الانقطاع بشكل مباشر");
         monitor.setShowBadge(false);
         manager.createNotificationChannel(monitor);
 
         NotificationChannel alert = new NotificationChannel(
-                ALERT_CHANNEL, "MT_PING • تنبيهات انقطاع الاتصال", NotificationManager.IMPORTANCE_HIGH);
+                ALERT_CHANNEL, "MT_TOOLS • تنبيهات انقطاع الاتصال", NotificationManager.IMPORTANCE_HIGH);
         alert.setDescription("تنبيه عند فقد الاتصال بالعنوان الجاري فحصه");
         alert.enableVibration(true);
         manager.createNotificationChannel(alert);
@@ -260,7 +260,7 @@ public final class PingService extends Service {
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         Notification.Builder builder = new Notification.Builder(this, MONITOR_CHANNEL)
                 .setSmallIcon(R.drawable.ic_launcher)
-                .setContentTitle(disconnected ? "MT_PING • الاتصال منقطع" : "MT_PING • مراقبة الاتصال")
+                .setContentTitle(disconnected ? "MT_TOOLS • الاتصال منقطع" : "MT_TOOLS • مراقبة الاتصال")
                 .setContentText(details)
                 .setStyle(new Notification.BigTextStyle().bigText(details))
                 .setContentIntent(openIntent())
