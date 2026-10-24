@@ -71,7 +71,7 @@ public final class PingService extends Service {
 
         NotificationChannel alert = new NotificationChannel(
                 ALERT_CHANNEL, "MT_TOOLS • تنبيهات انقطاع الاتصال", NotificationManager.IMPORTANCE_HIGH);
-        alert.setDescription("تنبيه عند فقد الاتصال بالعنوان الجاري فحصه");
+        alert.setDescription("تنبيه عند فقد الاتصال بالعنوان الجار فحصه");
         alert.enableVibration(true);
         manager.createNotificationChannel(alert);
     }
@@ -301,7 +301,7 @@ public final class PingService extends Service {
         } else if (last != null && last.kind == PingSample.Kind.ERROR) {
             details = "تعذّر إجراء الفحص • " + snapshot.host;
         } else {
-            details = "جاري فحص " + snapshot.host;
+            details = "جار فحص " + snapshot.host;
         }
         if (lastCompletedMs >= 0) {
             details += " • آخر فصل: " + asClock(lastCompletedMs);

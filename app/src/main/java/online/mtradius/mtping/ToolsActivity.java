@@ -23,6 +23,7 @@ import java.util.Locale;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.Socket;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /** Separate service technician page. Network scans run off the UI thread. */
 public final class ToolsActivity extends Activity {
@@ -36,6 +37,12 @@ public final class ToolsActivity extends Activity {
     private NetworkTools.Connection current;
     private final Map<String,TextView> ubntRows=new LinkedHashMap<>();
     private final Map<String,TextView> scanRows=new LinkedHashMap<>();
+    private final Map<String,LanScanner.Device> scannedDevices=new LinkedHashMap<>();
+    private volatile Thread scanThread;
+    private volatile Thread portsThread;
+    private volatile PortScanner.Stop portStop;
+    private final AtomicInteger scanGeneration=new AtomicInteger();
+    private volatile boolean scanStopping;
     private Sidebar sidebar;
 
     private int dp(float n){return Math.round(n*getResources().getDisplayMetrics().density);}
@@ -169,66 +176,100 @@ public final class ToolsActivity extends Activity {
         Button scanButton=button("بدء كشف الأجهزة",0xFF173245);
         scan.addView(scanButton,margins(-1,dp(50),12,0));
         ProgressBar scanProgress=new ProgressBar(this,null,android.R.attr.progressBarStyleHorizontal);
-        scanProgress.setMax(100);scanProgress.setProgressTintList(android.content.res.ColorStateList.valueOf(GREEN));
+        scanProgress.setMax(100);
+        scanProgress.setProgressTintList(android.content.res.ColorStateList.valueOf(GREEN));
         scanProgress.setVisibility(View.GONE);
         scan.addView(scanProgress,margins(-1,dp(7),11,2));
         scanLog=text("جاهز للفحص",13,MUTED,false);
         scan.addView(scanLog,margins(-1,-2,8,10));
-        lanResults=col();
-        scan.addView(lanResults);
+        lanResults=col(); scan.addView(lanResults);
         scanButton.setOnClickListener(v->{
+            Thread existing=scanThread;
+            if(existing!=null && existing.isAlive()){
+                scanStopping=true;
+                scanGeneration.incrementAndGet();
+                existing.interrupt();
+                scanButton.setEnabled(false);
+                scanButton.setText("جار إيقاف الفحص...");
+                scanLog.setText("تم طلب إيقاف الفحص، وستبقى النتائج التي ظهرت.");
+                return;
+            }
+            final int ticket=scanGeneration.incrementAndGet();
+            scanStopping=false;
             final NetworkTools.Connection net=NetworkTools.connection(this);
-            scanButton.setEnabled(false);scanButton.setText("جاري اكتشاف الأجهزة...");
-            scanProgress.setVisibility(View.VISIBLE);scanProgress.setProgress(0);
-            scanLog.setText("تحضير الفحص...");lanResults.removeAllViews();scanRows.clear();
-            new Thread(()->{
+            scanButton.setText("■ إيقاف الفحص");
+            scanButton.setBackground(surface(0xFF9D3A4E,BORDER,12));
+            scanProgress.setVisibility(View.VISIBLE);
+            scanProgress.setProgress(0);
+            scanLog.setText("جار التحضير للفحص...");
+            lanResults.removeAllViews();
+            scanRows.clear();scannedDevices.clear();
+            Thread worker=new Thread(()->{
+                final Thread workerSelf=Thread.currentThread();
+                boolean interrupted=false;
                 try{
                     LanScanner.scan(this,net,new LanScanner.Update(){
-                        @Override public void device(LanScanner.Device device){
+                        @Override public void device(LanScanner.Device result){
+                            if(ticket!=scanGeneration.get() || Thread.currentThread().isInterrupted())return;
                             post(()->{
-                                TextView item=scanRows.get(device.ip);
+                                if(ticket!=scanGeneration.get())return;
+                                LanScanner.Device merged=LanScanner.Device.merge(
+                                        scannedDevices.get(result.ip),result);
+                                scannedDevices.put(result.ip,merged);
+                                TextView item=scanRows.get(result.ip);
                                 if(item==null){
                                     item=text("",13,GREEN,false);
                                     item.setPadding(dp(12),dp(12),dp(12),dp(12));
                                     item.setBackground(surface(BG,BORDER,11));
-                                    scanRows.put(device.ip,item);
+                                    scanRows.put(result.ip,item);
                                     lanResults.addView(item,margins(-1,-2,5,0));
                                 }
-                                String kind=device.kind();
-                                String prefix=device.self?"▣  ":device.gateway?"◈  ":"●  ";
-                                String details=prefix+device.displayName()+"  •  "+device.ip+
-                                    "\n"+kind+
-                                    (device.latency>=0?String.format(Locale.US,"  |  %.2f ms",device.latency):"")+
-                                    "\nMAC: "+(device.mac.isEmpty()?"غير متاح":device.mac)+
-                                    (device.vendor.isEmpty()?"":"  |  "+device.vendor)+
-                                    "\nالتعرّف: "+(device.source.isEmpty()?"غير محدد":device.source);
+                                String prefix=merged.self?"▣  ":merged.gateway?"◈  ":"●  ";
+                                String details=prefix+merged.displayName()+"  •  "+merged.ip+
+                                    "\n"+merged.kind()+
+                                    (merged.latency>=0?String.format(Locale.US,"  |  %.2f ms",merged.latency):"")+
+                                    (merged.mac.isEmpty()?"":"\nالماك: "+merged.mac+
+                                        (merged.vendor.isEmpty()?"":"  |  "+merged.vendor))+
+                                    "\nالتعرّف: "+(merged.source.isEmpty()?"غير محدد":merged.source);
                                 item.setText(details);
-                                if(!device.self){
-                                    item.setOnClickListener(z->openRouter(device.ip));
-                                }
+                                if(!merged.self)item.setOnClickListener(z->openRouter(merged.ip));
                             });
                         }
                         @Override public void progress(int done,int total,int detected){
+                            if(ticket!=scanGeneration.get())return;
                             post(()->{
+                                if(ticket!=scanGeneration.get())return;
                                 int pct=total>0?Math.min(100,Math.round(done*100f/total)):100;
                                 scanProgress.setProgress(pct);
                                 scanLog.setText(String.format(Locale.US,
-                                    "جاري الفحص: %d / %d  •  %d%%  •  الأجهزة المستجيبة: %d",
+                                    "جار الفحص: %d / %d  •  %d%%  •  الأجهزة المستجيبة: %d",
                                     done,total,pct,detected));
                             });
                         }
                         @Override public void info(String line){
-                            log(scanLog,line);
+                            if(ticket==scanGeneration.get())log(scanLog,line);
                         }
                     });
-                }catch(InterruptedException ignored){log(scanLog,"توقف الفحص قبل اكتماله");}
-                catch(Exception e){log(scanLog,"تعذّر إكمال الفحص: "+e.getMessage());}
-                post(()->{
-                    scanProgress.setProgress(100);
-                    scanButton.setText("إعادة فحص الأجهزة");scanButton.setEnabled(true);
-                    scanLog.append("\nاكتمل الفحص • العناصر المعروضة: "+scanRows.size());
-                });
-            },"MT_TOOLS-LAN-scan").start();
+                }catch(InterruptedException ignored){interrupted=true;}
+                catch(Exception e){
+                    if(ticket==scanGeneration.get())log(scanLog,"تعذّر إكمال الفحص: "+e.getMessage());
+                }finally{
+                    final boolean didStop=interrupted||scanStopping||ticket!=scanGeneration.get();
+                    post(()->{
+                        if(scanThread==workerSelf)scanThread=null;
+                        scanStopping=false;
+                        scanButton.setText("إعادة فحص الأجهزة");
+                        scanButton.setBackground(surface(0xFF173245,BORDER,12));
+                        scanButton.setEnabled(true);
+                        if(didStop)scanLog.setText("تم إيقاف الفحص • الأجهزة المعروضة: "+scanRows.size());
+                        else{
+                            scanProgress.setProgress(100);
+                            scanLog.append("\nاكتمل الفحص • الأجهزة المعروضة: "+scanRows.size());
+                        }
+                    });
+                }
+            },"MT_TOOLS-LAN-scan");
+            scanThread=worker;worker.start();
         });
         }
         if(section.equals("ubnt")) {
@@ -278,7 +319,7 @@ public final class ToolsActivity extends Activity {
             dnsButton.setOnClickListener(v->{
                 String domain=dnsTarget.getText().toString().trim();
                 if(!PingService.validTarget(domain)){dnsTarget.setError("عنوان غير صحيح");return;}
-                dnsButton.setEnabled(false);dnsResult.setText("جاري تحليل DNS...");
+                dnsButton.setEnabled(false);dnsResult.setText("جار تحليل DNS...");
                 new Thread(()->{
                     long started=android.os.SystemClock.elapsedRealtime();
                     try{
@@ -292,34 +333,83 @@ public final class ToolsActivity extends Activity {
                 },"MT_TOOLS-DNS").start();
             });
 
-            LinearLayout ports=card(root,"اختبار منافذ TCP");
-            ports.addView(text("افحص الخدمات الشائعة على جهاز بشبكتك، أو اكتب عنواناً عاماً.",11,MUTED,false));
+            LinearLayout ports=card(root,"فحص جميع منافذ TCP");
+            ports.addView(text("يتم اختبار المنافذ من 1 إلى 65535، وتظهر المنافذ المفتوحة فقط. تستطيع إيقاف الفحص بأي وقت.",11,MUTED,false));
             EditText portHost=new EditText(this);portHost.setSingleLine(true);portHost.setText("192.168.1.1");
             portHost.setTextColor(WHITE);portHost.setBackground(surface(BG,BORDER,12));
             portHost.setTextDirection(View.TEXT_DIRECTION_LTR);
             portHost.setPadding(dp(12),dp(10),dp(12),dp(10));
             ports.addView(portHost,margins(-1,dp(48),9,9));
-            Button check=button("فحص المنافذ 22، 53، 80، 443، 8080، 8291",0xFF173245);
+            Button check=button("بدء فحص المنافذ 1–65535",0xFF173245);
             ports.addView(check,new LinearLayout.LayoutParams(-1,dp(53)));
+            ProgressBar portsProgress=new ProgressBar(this,null,android.R.attr.progressBarStyleHorizontal);
+            portsProgress.setMax(65535);
+            portsProgress.setProgressTintList(android.content.res.ColorStateList.valueOf(GREEN));
+            portsProgress.setVisibility(View.GONE);
+            ports.addView(portsProgress,margins(-1,dp(7),10,8));
+            TextView portSummary=text("",12,MUTED,false);
+            ports.addView(portSummary);
             TextView portResult=text("",12,GREEN,false);portResult.setTextIsSelectable(true);
             ports.addView(portResult,margins(-1,-2,10,0));
             check.setOnClickListener(v->{
+                Thread existing=portsThread;
+                if(existing!=null && existing.isAlive()){
+                    if(portStop!=null)portStop.cancel();
+                    existing.interrupt();
+                    check.setEnabled(false);
+                    check.setText("جار إيقاف فحص المنافذ...");
+                    return;
+                }
                 String host=portHost.getText().toString().trim();
                 if(!PingService.validTarget(host)){portHost.setError("عنوان غير صحيح");return;}
-                check.setEnabled(false);portResult.setText("جاري فحص منافذ TCP...");
-                new Thread(()->{
-                    StringBuilder b=new StringBuilder();
-                    for(int port:new int[]{22,53,80,443,8080,8291}){
-                        try(Socket socket=new Socket()){
-                            socket.connect(new InetSocketAddress(host,port),950);
-                            b.append(port).append("  •  مفتوح\n");
-                        }catch(Exception e){b.append(port).append("  •  مغلق أو محجوب\n");}
+                final PortScanner.Stop stop=new PortScanner.Stop();
+                portStop=stop;
+                portResult.setText("");
+                portSummary.setText("جار تحضير فحص المنافذ...");
+                portsProgress.setProgress(0);
+                portsProgress.setVisibility(View.VISIBLE);
+                check.setText("■ إيقاف فحص المنافذ");
+                check.setBackground(surface(0xFF9D3A4E,BORDER,12));
+                Thread worker=new Thread(()->{
+                    final Thread self=Thread.currentThread();
+                    try{
+                        PortScanner.scan(host,stop,new PortScanner.Listener(){
+                            @Override public void progress(int done,int total,int open){
+                                post(()->{
+                                    if(portStop!=stop || stop.isCancelled())return;
+                                    portsProgress.setProgress(done);
+                                    portSummary.setText(String.format(Locale.US,
+                                        "تم اختبار %d / %d  •  %d%%  •  المفتوحة: %d",
+                                        done,total,(int)(done*100L/total),open));
+                                });
+                            }
+                            @Override public void found(int port,String service){
+                                post(()->{
+                                    if(portStop==stop && !stop.isCancelled())
+                                        portResult.append(port+"  •  "+service+"  •  مفتوح\n");
+                                });
+                            }
+                            @Override public void message(String line){
+                                if(!stop.isCancelled())post(()->portSummary.setText(line));
+                            }
+                        });
+                    }catch(InterruptedException ignored) { }
+                    finally{
+                        final boolean wasStopped=stop.isCancelled();
+                        post(()->{
+                            if(portsThread==self)portsThread=null;
+                            check.setEnabled(true);
+                            check.setText("إعادة فحص كل منافذ TCP");
+                            check.setBackground(surface(0xFF173245,BORDER,12));
+                            if(wasStopped)portSummary.append("\nتوقف الفحص قبل اكتماله.");
+                            else portsProgress.setProgress(65535);
+                        });
                     }
-                    post(()->{portResult.setText(b.toString());check.setEnabled(true);});
-                },"MT_TOOLS-TCP").start();
+                },"MT_TOOLS-All-TCP");
+                portsThread=worker;worker.start();
             });
         }
-        root.addView(text("MT_RADIUS • أدوات صيانة الشبكات",11,MUTED,false),margins(-1,-2,20,0));
+        AppFooter.add(this,root);
     }
 
     private void refreshConnection(){
@@ -329,7 +419,7 @@ public final class ToolsActivity extends Activity {
                 (current.prefix>0?" /"+current.prefix:""));
         gatewayText.setText("Gateway: "+(current.gateway.isEmpty()?"غير متاح":current.gateway));
         gatewayText.setEnabled(!current.gateway.isEmpty());
-        publicText.setText("الآيبي الخارجي: جاري الاستعلام...");
+        publicText.setText("الآيبي الخارجي: جار الاستعلام...");
         new Thread(()->{
             String data;
             try{data=NetworkTools.getPublicIp();}catch(Exception e){data="غير متاح • تحقق من الإنترنت";}
@@ -341,5 +431,12 @@ public final class ToolsActivity extends Activity {
         if(sidebar!=null && sidebar.isOpen()){sidebar.close();return;}
         super.onBackPressed();
     }
-    @Override protected void onDestroy(){closed=true;generation++;super.onDestroy();}
+    @Override protected void onDestroy(){
+        closed=true;generation++;
+        scanGeneration.incrementAndGet();
+        Thread scanning=scanThread;if(scanning!=null)scanning.interrupt();
+        if(portStop!=null)portStop.cancel();
+        Thread ports=portsThread;if(ports!=null)ports.interrupt();
+        super.onDestroy();
+    }
 }

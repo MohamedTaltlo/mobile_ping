@@ -32,11 +32,11 @@ final class UbntDiscovery {
         String describe() {
             String title = !model.isEmpty() ? model : !hostname.isEmpty() ? hostname : "جهاز UBNT";
             StringBuilder b = new StringBuilder(title).append("\nIP: ").append(address);
-            if (!mac.isEmpty()) b.append("  |  MAC: ").append(mac);
+            if (!mac.isEmpty()) b.append("  |  الماك: ").append(mac);
             if (!hostname.isEmpty()) b.append("\nالاسم: ").append(hostname);
             if (!firmware.isEmpty()) b.append("\nالبرنامج: ").append(firmware);
             if (!ssid.isEmpty()) b.append("\nSSID: ").append(ssid);
-            b.append("\nUptime: ").append(uptime < 0 ? "غير متاح" : clock(uptime));
+            b.append("\nمدة التشغيل: ").append(uptime < 0 ? "غير متاحة" : clock(uptime));
             return b.toString();
         }
     }

@@ -50,7 +50,7 @@ final class Sidebar {
         sheet.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
         sheet.setPadding(dp(14),dp(21),dp(14),dp(15));
         sheet.setBackgroundColor(CARD);
-        FrameLayout.LayoutParams frame=new FrameLayout.LayoutParams(dp(295),-1,Gravity.RIGHT);
+        FrameLayout.LayoutParams frame=new FrameLayout.LayoutParams(dp(295),-1,Gravity.LEFT);
         overlay.addView(sheet,frame);
         TextView brand=new TextView(activity);
         brand.setText("MT_TOOLS");brand.setTextColor(WHITE);brand.setTextSize(27);

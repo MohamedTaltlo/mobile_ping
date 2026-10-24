@@ -40,20 +40,44 @@ final class LanScanner {
         Device(String ip){this.ip=ip;}
         String displayName(){
             if(self)return "هذا الهاتف";
-            if(gateway)return "البوابة • Gateway";
+            if(gateway) {
+                if(!name.isEmpty())return "البوابة • " + name;
+                if(type.startsWith("UPnP"))return "البوابة • " + type;
+                if(!vendor.isEmpty())return "البوابة • " + vendor;
+                return "البوابة • Gateway";
+            }
             if(!name.isEmpty())return name;
             if(!vendor.isEmpty())return vendor+" • جهاز";
             return type;
         }
         String kind(){
             if(self)return "الهاتف الحالي";
-            if(gateway)return "البوابة الرئيسية";
+            if(gateway)return type.startsWith("UPnP") ?
+                    "البوابة الرئيسية • " + type : "البوابة الرئيسية";
             if(port9100)return "طابعة (احتمال قوي: منفذ 9100)";
             if(port554)return "كاميرا أو جهاز بث (RTSP)";
             if(port445)return "كمبيوتر / تخزين شبكي (SMB)";
             if(port22)return "جهاز إدارة SSH";
             if(port80||port443)return "واجهة إدارة ويب";
             return type;
+        }
+        static Device merge(Device previous, Device update) {
+            if (previous == null) return update.copy();
+            Device d = previous.copy();
+            d.self |= update.self;
+            d.gateway |= update.gateway;
+            if (!update.mac.isEmpty()) d.mac=update.mac;
+            if (!update.name.isEmpty()) d.name=update.name;
+            if (!update.vendor.isEmpty()) d.vendor=update.vendor;
+            if (update.latency >= 0) d.latency=update.latency;
+            // Never overwrite the actual UPnP model with a generic gateway name.
+            if (update.type.startsWith("UPnP") ||
+                (d.type.equals("جهاز شبكة") && !update.type.equals("جهاز شبكة"))) d.type=update.type;
+            if (update.source.contains("UPnP") || d.source.isEmpty()) d.source=update.source;
+            d.port80 |= update.port80;d.port443 |= update.port443;
+            d.port22 |= update.port22;d.port554 |= update.port554;
+            d.port445 |= update.port445;d.port9100 |= update.port9100;
+            return d;
         }
         Device copy(){
             Device c=new Device(ip);c.mac=mac;c.name=name;c.vendor=vendor;c.type=type;
@@ -222,8 +246,8 @@ final class LanScanner {
         for(Map.Entry<String,String> entry:upnp.entrySet()){
             if(entry.getKey().startsWith(prefix)){
                 Device d=new Device(entry.getKey());d.type=entry.getValue();d.source="UPnP/SSDP";
-                all.put(d.ip,d);
-                update.device(d);
+                Device merged=all.compute(d.ip,(key,old)->Device.merge(old,d));
+                update.device(merged.copy());
             }
         }
         NeighborLookup arp=new NeighborLookup();
@@ -236,11 +260,14 @@ final class LanScanner {
         List<Future<?>> tasks=new ArrayList<>();
         try{
             for(int i=first;i<=last;i++){
+                if(Thread.currentThread().isInterrupted())throw new InterruptedException();
                 if(i==own)continue;
                 final String ip=prefix+i;
                 tasks.add(pool.submit(()->{
                     try{
+                        if(Thread.currentThread().isInterrupted())return;
                         double ms=ping(ip);
+                        if(Thread.currentThread().isInterrupted())return;
                         int http=0,https=0,ssh=0;
                         boolean alive=ms>=0;
                         if(!alive){
@@ -259,21 +286,25 @@ final class LanScanner {
                             if(d.mac.isEmpty()) d.mac=NetworkTools.localArpMac(ip);
                             d.vendor=vendor(d.mac);
                             if(upnp.containsKey(ip))d.type=upnp.get(ip);
+                            if(Thread.currentThread().isInterrupted())return;
                             d.port80=tcp(ip,80,170)==2 || d.port80;
                             d.port443=tcp(ip,443,170)==2 || d.port443;
                             d.port22=tcp(ip,22,170)==2 || d.port22;
                             d.port554=tcp(ip,554,150)==2;
                             d.port9100=tcp(ip,9100,150)==2;
                             d.port445=tcp(ip,445,150)==2;
-                            all.put(ip,d);
-                            update.device(d);detected.incrementAndGet();
+                            Device merged=all.compute(ip,(key,old)->Device.merge(old,d));
+                            update.device(merged.copy());detected.incrementAndGet();
                             // Enrichment is non-blocking for the rest of the subnet.
                             NbInfo nb=netbios(ip);
                             if(!nb.mac.isEmpty() && MAC.matcher(nb.mac).matches() &&
                                     !nb.mac.equals("00:00:00:00:00:00"))d.mac=nb.mac;
                             if(!nb.name.isEmpty())d.name=nb.name;
                             if(d.vendor.isEmpty())d.vendor=vendor(d.mac);
-                            if(!d.name.isEmpty()||!d.mac.isEmpty())update.device(d);
+                            if(!d.name.isEmpty()||!d.mac.isEmpty()) {
+                                Device enriched=all.compute(ip,(key,old)->Device.merge(old,d));
+                                update.device(enriched.copy());
+                            }
                         }
                     }catch(InterruptedException e){Thread.currentThread().interrupt();}
                     catch(Exception ignored){}
@@ -289,11 +320,14 @@ final class LanScanner {
         // Many neighbor entries appear only after the ping/TCP sweep warms up.
         // Re-query and re-publish enriched device rows if the OS exposed new MACs.
         for(Device device:all.values()){
+            if(Thread.currentThread().isInterrupted())throw new InterruptedException();
             if(device.mac.isEmpty()){
                 String mac=arp.get(device.ip);
                 if(!mac.isEmpty()){
-                    device.mac=mac;device.vendor=vendor(mac);
-                    update.device(device);
+                    Device candidate=device.copy();
+                    candidate.mac=mac;candidate.vendor=vendor(mac);
+                    Device merged=all.compute(device.ip,(key,old)->Device.merge(old,candidate));
+                    update.device(merged.copy());
                 }
             }
         }

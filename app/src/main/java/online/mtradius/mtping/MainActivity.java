@@ -15,6 +15,10 @@ import android.text.InputType;
 import android.view.Gravity;
 import android.view.View;
 import android.view.WindowInsets;
+import android.view.inputmethod.EditorInfo;
+import android.view.inputmethod.InputMethodManager;
+import android.content.Context;
+import android.view.WindowManager;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
@@ -58,6 +62,7 @@ public final class MainActivity extends Activity {
         super.onCreate(saved);
         getWindow().setStatusBarColor(BG);
         getWindow().setNavigationBarColor(BG);
+        getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
         getWindow().getDecorView().setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
         outageStore = new OutageStore(this);
         buildUI();
@@ -126,7 +131,8 @@ public final class MainActivity extends Activity {
         // status-bar/cutout inset so the MT_PING header never sits behind the clock.
         // On older Android versions the decor already fits system windows.
         if (Build.VERSION.SDK_INT >= 35) {
-            scrolling.setClipToPadding(false);
+            // Never render scrolling cards behind the Android status-bar icons.
+            scrolling.setClipToPadding(true);
             scrolling.setOnApplyWindowInsetsListener((view, insets) -> {
                 android.graphics.Insets topSafe = insets.getInsets(
                         WindowInsets.Type.statusBars() | WindowInsets.Type.displayCutout());
@@ -140,6 +146,7 @@ public final class MainActivity extends Activity {
         LinearLayout root = vertical();
         root.setPadding(dp(18), dp(18), dp(18), dp(28));
         root.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+        root.setFocusableInTouchMode(true);
         scrolling.addView(root);
 
         LinearLayout header = horizontal();
@@ -182,6 +189,7 @@ public final class MainActivity extends Activity {
         hostInput.setHintTextColor(MUTED);
         hostInput.setHint("10.0.0.1");
         hostInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
+        hostInput.setImeOptions(EditorInfo.IME_ACTION_DONE | EditorInfo.IME_FLAG_NO_EXTRACT_UI);
         hostInput.setBackground(shape(0xFF091826, BORDER, 12));
         hostInput.setPadding(dp(12), dp(11), dp(12), dp(11));
         LinearLayout.LayoutParams ip = new LinearLayout.LayoutParams(0, dp(52), 1);
@@ -194,11 +202,31 @@ public final class MainActivity extends Activity {
         intervalInput.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
         intervalInput.setSelectAllOnFocus(true);
         intervalInput.setInputType(InputType.TYPE_CLASS_NUMBER);
+        intervalInput.setImeOptions(EditorInfo.IME_ACTION_DONE | EditorInfo.IME_FLAG_NO_EXTRACT_UI);
+        intervalInput.setTextDirection(View.TEXT_DIRECTION_LTR);
         intervalInput.setGravity(Gravity.CENTER);
         intervalInput.setHint("1000");
         intervalInput.setHintTextColor(MUTED);
         intervalInput.setBackground(shape(0xFF173245, BORDER, 12));
         fields.addView(intervalInput, new LinearLayout.LayoutParams(dp(94), dp(52)));
+        intervalInput.setOnEditorActionListener((view, actionId, event) -> {
+            if(actionId == EditorInfo.IME_ACTION_DONE) {
+                // Keep the same scroll position on Samsung IME dismissal.
+                final int scrollY=scrolling.getScrollY();
+                InputMethodManager input=(InputMethodManager)getSystemService(Context.INPUT_METHOD_SERVICE);
+                if(input!=null)input.hideSoftInputFromWindow(intervalInput.getWindowToken(),0);
+                intervalInput.clearFocus();
+                root.requestFocus();
+                // Samsung keyboard can relayout the ScrollView twice: once when
+                // the IME starts hiding, again when the viewport expands.
+                // Restore the user's position after those layout passes.
+                scrolling.post(()->scrolling.scrollTo(0,scrollY));
+                scrolling.postDelayed(()->scrolling.scrollTo(0,scrollY),180);
+                scrolling.postDelayed(()->scrolling.scrollTo(0,scrollY),340);
+                return true;
+            }
+            return false;
+        });
         target.addView(fields, margin(-1, -2, 8, 0));
         TextView intervalHelp = txt("الفاصل بين النبضات بالمللي ثانية (200 إلى 60000) • الافتراضي 1000", 10, MUTED, false);
         target.addView(intervalHelp, margin(-1, -2, 8, 0));
@@ -297,9 +325,7 @@ public final class MainActivity extends Activity {
         logText.setBackground(shape(0xFF030D16, BORDER, 16));
         logText.setTextIsSelectable(true);
         root.addView(logText);
-        TextView foot = txt("MT_RADIUS • مراقبة مستمرة بالخلفية", 10, MUTED, false);
-        foot.setGravity(Gravity.CENTER);
-        root.addView(foot, margin(-1, -2, 22, 0));
+        AppFooter.add(this,root);
     }
 
     private TextView statCard(LinearLayout row, String label, String initial) {

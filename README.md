@@ -6,6 +6,16 @@ Native Android ICMP monitoring app, inspired by Termux ping output. Foreground b
 
 See the source and [build workflow](.github/workflows/android.yml). The APK is a debug-signed sideload build; it is not a Play Store release.
 
+## الإصدار 2.1.1
+
+- القائمة الجانبية تفتح يسار الشاشة بجانب زرها.
+- الفحص المتقدم للشبكة قابل للإيقاف أثناء العمل مع إبقاء الأجهزة التي اكتُشفت.
+- لا يتم طمس معلومات UPnP عن الراوتر بتسمية «البوابة الرئيسية» العامة.
+- لا يظهر سطر «الماك» عندما لا يكون متاحاً، ولا يُخمن MAC.
+- فحص جميع منافذ TCP من 1 إلى 65535 بإيقاف وتقدم فوري؛ المنافذ الصامتة تُعامل كمغلقة أو محجوبة ولا يميز هذا الفحص بينهما.
+- فوتر MT_RADIUS 2019-السنة الحالية مرتبط بواتساب +963969451248.
+- تثبيت سلوك لوحة المفاتيح عند Done وإبعاد المحتوى عن شريط حالة الهاتف.
+
 ## الإصدار 2.1.0
 
 - قائمة جانبية Sidebar؛ كل فكرة في صفحة مستقلة: Ping، معلومات الشبكة، كشف الأجهزة، Traceroute، Ubiquiti Discovery، DNS وفحص المنافذ.
