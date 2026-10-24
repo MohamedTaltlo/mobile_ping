@@ -90,7 +90,9 @@ public final class PingService extends Service {
                 stopSelf();
                 return START_NOT_STICKY;
             }
-            if (interval != 1000 && interval != 2000 && interval != 5000) interval = 1000;
+            // User-defined cadence in milliseconds. Timeout probes may take longer
+            // than the requested period; avoid reporting that as a fixed-rate timer.
+            if (interval < 200 || interval > 60000) interval = 1000;
             getSharedPreferences("settings", MODE_PRIVATE).edit()
                     .putString("host", host).putInt("interval", interval)
                     .putBoolean("active", true).apply();
@@ -102,6 +104,7 @@ public final class PingService extends Service {
             String host = getSharedPreferences("settings", MODE_PRIVATE).getString("host", "10.0.0.1");
             int interval = getSharedPreferences("settings", MODE_PRIVATE).getInt("interval", 1000);
             if (validTarget(host)) {
+                if (interval < 200 || interval > 60000) interval = 1000;
                 startMonitor(host, interval);
                 return START_STICKY;
             }

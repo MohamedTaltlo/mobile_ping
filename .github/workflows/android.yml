@@ -58,27 +58,34 @@ jobs:
         run: |
           set -euxo pipefail
           test -s app/build/outputs/apk/debug/app-debug.apk
-          cp app/build/outputs/apk/debug/app-debug.apk MT_PING.apk
-          ls -lh MT_PING.apk
-          sha256sum MT_PING.apk
+          cp app/build/outputs/apk/debug/app-debug.apk MT_TOOLS.apk
+          ls -lh MT_TOOLS.apk
+          sha256sum MT_TOOLS.apk
 
       - name: Upload APK as workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: MT_PING-APK
-          path: MT_PING.apk
+          name: MT_TOOLS-APK
+          path: MT_TOOLS.apk
           if-no-files-found: error
           retention-days: 90
 
       - name: Publish MT_PING release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.1.3
-          name: MT_PING v1.1.3
+          tag_name: v2.0.0
+          name: MT_PING v2.0.0
           target_commitish: ${{ github.sha }}
           body: |
-            **MT_PING 1.1.3 • عدادان متزامنان وسجل جلسة مؤقت بدون CSV**
+            **MT_TOOLS v2.0.0 • أدوات صيانة الشبكات**
 
+            - تغيير اسم التطبيق إلى MT_TOOLS مع الاحتفاظ بمعرف الحزمة لترقية التطبيق السابق.
+            - كتابة فاصل Ping يدوي بالمللي ثانية: من 200 إلى 60000، الافتراضي 1000.
+            - Traceroute مع تدرج TTL على الأجهزة الداعمة.
+            - IP داخلي وخارجي وGateway مع فتح صفحة الراوتر HTTP.
+            - فحص LAN بنطاق محدد وآمن على شبكة Wi-Fi.
+            - Ubiquiti Discovery عبر UDP/10001 وقراءة الموديل وMAC وFirmware وUptime عند توفرها.
+            - حذف العنوان الفرعي للرسم البياني.
             - عدادا الإشعارات يستخدمان وقت بداية موحّداً ولا يعاد تحديثهما كل نبضة.
             - لا يظهر نص قديم لمدة الفصل أثناء العد؛ العداد الأصلي من النظام هو مصدر الوقت.
             - سجل الفصل خاص بجلسة المراقبة الحالية ويُمسح عند إيقافها أو بدء جلسة جديدة.
@@ -95,7 +102,7 @@ jobs:
             - عناوين جاهزة: 10.0.0.1 و 8.8.8.8 و www.google.com.
 
             APK موقّع بتوقيع اختبار آلي، مناسب للتثبيت المباشر وليس إصدار Play Store.
-          files: MT_PING.apk
+          files: MT_TOOLS.apk
           fail_on_unmatched_files: true
           overwrite_files: true
         env:

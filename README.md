@@ -1,10 +1,20 @@
-# MT_PING — المراقبة الاحترافية للاتصال
+# MT_TOOLS — أدوات صيانة الشبكات
 
 Native Android ICMP monitoring app, inspired by Termux ping output. Foreground background monitor, per-packet history, outage timer, local CSV log and Android notification.
 
-**Android:** 8.0+ · **Target:** Android 15 · **Build:** GitHub Actions `Android APK` produces `MT_PING.apk` in GitHub Releases and workflow artifacts.
+**Android:** 8.0+ · **Target:** Android 15 · **Build:** GitHub Actions `Android APK` produces `MT_TOOLS.apk` in GitHub Releases and workflow artifacts.
 
 See the source and [build workflow](.github/workflows/android.yml). The APK is a debug-signed sideload build; it is not a Play Store release.
+
+## الإصدار 2.0.0
+
+- التطبيق صار MT_TOOLS (المعرّف Android نفسه لتسهيل ترقية النسخة السابقة).
+- شاشة Ping تستقبل الفاصل بالمللي ثانية: 200–60000 ms (افتراضي 1000ms). الرد المتأخر/Timeout قد يمدد الفاصل الفعلي.
+- صفحة أدوات الصيانة تضم Traceroute وإظهار عنوان الهاتف المحلي والخارجي وGateway وفتح الراوتر عبر HTTP.
+- فحص الأجهزة القابلة للاستجابة في شبكة LAN بحد أقصى نطاق /24، وقراءة MAC من ARP فقط عندما يسمح Android بذلك.
+- اكتشاف UBNT الحقيقي باستخدام UDP/10001 (TLV)، مع قراءة الموديل والإصدار وUptime عندما يبلغ الجهاز بها.
+- بعض أجهزة Android تمنع ARP أو TTL وبعض أجهزة الشبكة تمنع Ping أو UBNT Discovery؛ التطبيق يعرض ما ينجح فعلياً فقط.
+- حذف الوصف الثانوي تحت الرسم البياني.
 
 ## التحديث 1.1.3
 

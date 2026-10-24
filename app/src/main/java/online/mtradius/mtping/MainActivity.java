@@ -35,7 +35,6 @@ public final class MainActivity extends Activity {
     private static final int GREEN = 0xFF3EDAB6;
     private static final int RED = 0xFFFF6278;
     private static final int ORANGE = 0xFFFFC36A;
-    private static final int[] INTERVALS = {1000, 2000, 5000};
     private final Handler ui = new Handler(Looper.getMainLooper());
     private final Runnable refresh = new Runnable() {
         @Override public void run() {
@@ -45,11 +44,11 @@ public final class MainActivity extends Activity {
     };
 
     private EditText hostInput;
-    private Button startButton, intervalButton;
+    private Button startButton;
+    private EditText intervalInput;
     private TextView statusText, heroText, heroDetail, outageText, logText, outageHistory;
     private TextView[] stats = new TextView[6];
     private LatencyGraphView graph;
-    private int intervalIndex;
     private long lastRevision = Long.MIN_VALUE;
     private OutageStore outageStore;
     private boolean lastRunning;
@@ -64,8 +63,7 @@ public final class MainActivity extends Activity {
         String host = getSharedPreferences("settings", MODE_PRIVATE).getString("host", "10.0.0.1");
         hostInput.setText(host);
         int interval = getSharedPreferences("settings", MODE_PRIVATE).getInt("interval", 1000);
-        intervalIndex = interval == 5000 ? 2 : interval == 2000 ? 1 : 0;
-        intervalButton.setText(INTERVALS[intervalIndex] / 1000 + " ث");
+        intervalInput.setText(Integer.toString(interval));
         if (Build.VERSION.SDK_INT >= 33 &&
                 checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 77);
@@ -158,7 +156,23 @@ public final class MainActivity extends Activity {
         statusText.setBackground(shape(CARD, BORDER, 30));
         header.addView(statusText);
         root.addView(header);
-        root.addView(new View(this), margin(-1, dp(8), 0, 0));
+        LinearLayout navigation = horizontal();
+        Button pingTab = new Button(this);
+        pingTab.setText("●  بينغ");
+        pingTab.setAllCaps(false);
+        pingTab.setTextColor(GREEN);
+        pingTab.setBackground(shape(CARD, BORDER, 12));
+        navigation.addView(pingTab, new LinearLayout.LayoutParams(0, dp(44), 1));
+        Button toolTab = new Button(this);
+        toolTab.setText("المسار وعنوان IP  ←");
+        toolTab.setAllCaps(false);
+        toolTab.setTextColor(WHITE);
+        toolTab.setBackground(shape(0xFF173245, BORDER, 12));
+        LinearLayout.LayoutParams navParams = new LinearLayout.LayoutParams(0, dp(44), 1.5f);
+        navParams.rightMargin = dp(8);
+        navigation.addView(toolTab, navParams);
+        toolTab.setOnClickListener(v -> startActivity(new Intent(this, ToolsActivity.class)));
+        root.addView(navigation, margin(-1, -2, 10, 5));
 
         LinearLayout target = vertical();
         target.setPadding(dp(16), dp(14), dp(16), dp(16));
@@ -181,21 +195,21 @@ public final class MainActivity extends Activity {
         LinearLayout.LayoutParams ip = new LinearLayout.LayoutParams(0, dp(52), 1);
         ip.rightMargin = dp(9);
         fields.addView(hostInput, ip);
-        intervalButton = new Button(this);
-        intervalButton.setAllCaps(false);
-        intervalButton.setTextColor(GREEN);
-        intervalButton.setTextSize(13);
-        intervalButton.setBackground(shape(0xFF173245, 0, 12));
-        fields.addView(intervalButton, new LinearLayout.LayoutParams(dp(68), dp(52)));
-        intervalButton.setOnClickListener(v -> {
-            if (PingState.INSTANCE.snapshot().running) {
-                Toast.makeText(this, "أوقف المراقبة لتغيير مدة النبضة", Toast.LENGTH_SHORT).show();
-                return;
-            }
-            intervalIndex = (intervalIndex + 1) % INTERVALS.length;
-            intervalButton.setText(INTERVALS[intervalIndex] / 1000 + " ث");
-        });
+        intervalInput = new EditText(this);
+        intervalInput.setSingleLine(true);
+        intervalInput.setTextColor(GREEN);
+        intervalInput.setTextSize(15);
+        intervalInput.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
+        intervalInput.setSelectAllOnFocus(true);
+        intervalInput.setInputType(InputType.TYPE_CLASS_NUMBER);
+        intervalInput.setGravity(Gravity.CENTER);
+        intervalInput.setHint("1000");
+        intervalInput.setHintTextColor(MUTED);
+        intervalInput.setBackground(shape(0xFF173245, BORDER, 12));
+        fields.addView(intervalInput, new LinearLayout.LayoutParams(dp(94), dp(52)));
         target.addView(fields, margin(-1, -2, 8, 0));
+        TextView intervalHelp = txt("الفاصل بين النبضات بالمللي ثانية (200 إلى 60000) • الافتراضي 1000", 10, MUTED, false);
+        target.addView(intervalHelp, margin(-1, -2, 8, 0));
         target.addView(txt("عناوين جاهزة", 10, MUTED, true), margin(-1, -2, 13, 7));
         LinearLayout presets = horizontal();
         String[] defaultTargets = {"10.0.0.1", "8.8.8.8", "www.google.com"};
@@ -268,8 +282,6 @@ public final class MainActivity extends Activity {
         root.addView(second, margin(-1, -2, 9, 0));
 
         addHeading(root, "الرسم البياني للاستجابة");
-        root.addView(txt("آخر 60 نبضة • تدريج مللي ثانية متغير لإظهار فروقات البينغ الصغيرة",
-                10, MUTED, false), margin(-1, -2, 0, 7));
         LinearLayout graphCard = vertical();
         graphCard.setPadding(dp(10), dp(8), dp(10), dp(8));
         graphCard.setBackground(shape(CARD, BORDER, 18));
@@ -324,10 +336,23 @@ public final class MainActivity extends Activity {
             hostInput.requestFocus();
             return;
         }
+        int millis;
+        try {
+            millis = Integer.parseInt(intervalInput.getText().toString().trim());
+        } catch (NumberFormatException e) {
+            intervalInput.setError("اكتب الفاصل بالمللي ثانية");
+            intervalInput.requestFocus();
+            return;
+        }
+        if (millis < 200 || millis > 60000) {
+            intervalInput.setError("اختر من 200 إلى 60000 مللي ثانية");
+            intervalInput.requestFocus();
+            return;
+        }
         Intent start = new Intent(this, PingService.class)
                 .setAction(PingService.ACTION_START)
                 .putExtra(PingService.EXTRA_HOST, target)
-                .putExtra(PingService.EXTRA_INTERVAL, INTERVALS[intervalIndex]);
+                .putExtra(PingService.EXTRA_INTERVAL, millis);
         try {
             startForegroundService(start);
         } catch (Exception e) {
@@ -347,7 +372,7 @@ public final class MainActivity extends Activity {
         startButton.setTextColor(s.running ? WHITE : BG);
         startButton.setBackground(shape(s.running ? 0xFFB33B50 : GREEN, 0, 14));
         hostInput.setEnabled(!s.running);
-        intervalButton.setEnabled(!s.running);
+        intervalInput.setEnabled(!s.running);
         if (!s.running && last == null) {
             heroText.setText("—");
             heroDetail.setText("ابدأ المراقبة لعرض نتيجة كل نبضة");
