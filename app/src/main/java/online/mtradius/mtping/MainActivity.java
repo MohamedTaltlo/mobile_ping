@@ -15,6 +15,7 @@ import android.os.SystemClock;
 import android.text.InputType;
 import android.view.Gravity;
 import android.view.View;
+import android.view.WindowInsets;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
@@ -125,6 +126,21 @@ public final class MainActivity extends Activity {
         scrolling.setFillViewport(true);
         scrolling.setBackgroundColor(BG);
         scrolling.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+
+        // Android 15+ forces edge-to-edge for targetSdk 35. Reserve the actual
+        // status-bar/cutout inset so the MT_PING header never sits behind the clock.
+        // On older Android versions the decor already fits system windows.
+        if (Build.VERSION.SDK_INT >= 35) {
+            scrolling.setClipToPadding(false);
+            scrolling.setOnApplyWindowInsetsListener((view, insets) -> {
+                android.graphics.Insets topSafe = insets.getInsets(
+                        WindowInsets.Type.statusBars() | WindowInsets.Type.displayCutout());
+                android.graphics.Insets bottomSafe = insets.getInsets(
+                        WindowInsets.Type.navigationBars());
+                view.setPadding(0, topSafe.top, 0, bottomSafe.bottom);
+                return insets;
+            });
+        }
         setContentView(scrolling);
         LinearLayout root = vertical();
         root.setPadding(dp(18), dp(18), dp(18), dp(28));
@@ -132,15 +148,21 @@ public final class MainActivity extends Activity {
         scrolling.addView(root);
 
         LinearLayout header = horizontal();
+        header.setMinimumHeight(dp(48));
         TextView brand = txt("MT_PING", 25, WHITE, true);
         brand.setLetterSpacing(.10f);
-        header.addView(brand, new LinearLayout.LayoutParams(0, -2, 1));
+        brand.setSingleLine(true);
+        brand.setTextDirection(View.TEXT_DIRECTION_LTR);
+        brand.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams brandParams = new LinearLayout.LayoutParams(0, -2, 1);
+        brandParams.leftMargin = dp(10);
+        header.addView(brand, brandParams);
         statusText = txt("●  متوقف", 12, MUTED, true);
         statusText.setPadding(dp(12), dp(9), dp(12), dp(9));
         statusText.setBackground(shape(CARD, BORDER, 30));
         header.addView(statusText);
         root.addView(header);
-        root.addView(txt("مراقبة الشبكة لحظة بلحظة • الإصدار 1.1.0", 10, MUTED, true), margin(-1, -2, 2, 16));
+        root.addView(txt("مراقبة الشبكة لحظة بلحظة • الإصدار 1.1.1", 10, MUTED, true), margin(-1, -2, 2, 16));
 
         LinearLayout target = vertical();
         target.setPadding(dp(16), dp(14), dp(16), dp(16));
@@ -259,11 +281,13 @@ public final class MainActivity extends Activity {
         root.addView(second, margin(-1, -2, 9, 0));
 
         addHeading(root, "الرسم البياني للاستجابة");
+        root.addView(txt("آخر 60 نبضة • تدريج مللي ثانية متغير لإظهار فروقات البينغ الصغيرة",
+                10, MUTED, false), margin(-1, -2, 0, 7));
         LinearLayout graphCard = vertical();
         graphCard.setPadding(dp(10), dp(8), dp(10), dp(8));
         graphCard.setBackground(shape(CARD, BORDER, 18));
         graph = new LatencyGraphView(this);
-        graphCard.addView(graph, new LinearLayout.LayoutParams(-1, dp(160)));
+        graphCard.addView(graph, new LinearLayout.LayoutParams(-1, dp(220)));
         root.addView(graphCard);
 
         addHeading(root, "سجل جميع مرات الفصل");

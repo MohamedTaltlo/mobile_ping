@@ -73,12 +73,14 @@ jobs:
       - name: Publish MT_PING release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.1.0
-          name: MT_PING v1.1.0
+          tag_name: v1.1.1
+          name: MT_PING v1.1.1
           target_commitish: ${{ github.sha }}
           body: |
-            **MT_PING 1.1.0 • واجهة عربية RTL**
+            **MT_PING 1.1.1 • إصلاح الترويسة وشريط الحالة**
 
+            - إصلاح تداخل الترويسة مع شريط الساعة والإشعارات على Android 15+.
+            - ترتيب الاسم وحالة الاتصال مع هامش آمن وواجهة RTL.
             - إشعار تنبيه عند بدء كل انقطاع.
             - عدّاد الفصل يتجدد كل ثانية بلوحة الإشعارات.
             - عرض مدة آخر فصل بعد عودة الاتصال.
