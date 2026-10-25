@@ -22,8 +22,8 @@ android {
         applicationId 'online.mtradius.mtping'
         minSdk 26
         targetSdk 35
-        versionCode 15
-        versionName '4.1.0'
+        versionCode 16
+        versionName '4.1.1'
     }
 
     // Native Nmap must be extracted to an executable directory on Android 10+.

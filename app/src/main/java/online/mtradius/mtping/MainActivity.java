@@ -152,15 +152,19 @@ public final class MainActivity extends Activity {
 
         LinearLayout header = horizontal();
         header.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
-        header.setMinimumHeight(dp(48));
+        header.setMinimumHeight(dp(65));
+        header.setPadding(dp(8),dp(7),dp(8),dp(7));
+        header.setBackground(shape(CARD,BORDER,18));
+        if(!palette.dark)header.setElevation(dp(2));
         TextView menuButton = txt("☰", 26, GREEN, true);
         menuButton.setGravity(Gravity.CENTER);
+        menuButton.setBackground(shape(palette.accentSoft,BORDER,13));
         header.addView(menuButton,new LinearLayout.LayoutParams(dp(48),dp(48)));
         menuButton.setContentDescription("فتح القائمة الجانبية");
         menuButton.setOnClickListener(v -> sidebar.open());
 
-        TextView brand = txt("MT_TOOLS", 25, WHITE, true);
-        brand.setLetterSpacing(.10f);
+        TextView brand = txt("MT_TOOLS", 23, WHITE, true);
+        brand.setLetterSpacing(.045f);
         brand.setSingleLine(true);
         brand.setTextDirection(View.TEXT_DIRECTION_LTR);
         brand.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
@@ -168,12 +172,13 @@ public final class MainActivity extends Activity {
         brandParams.rightMargin = dp(9);
         header.addView(brand,brandParams);
 
-        statusText = txt("●  متوقف", 12, MUTED, true);
+        statusText = txt("●  متوقف", 11, MUTED, true);
         statusText.setPadding(dp(10),dp(9),dp(10),dp(9));
         statusText.setBackground(shape(CARD,BORDER,30));
         header.addView(statusText);
+        ThemeSelector.attachIcon(this,header);
         root.addView(header);
-        ThemeSelector.attach(this,root);
+        root.addView(new View(this),margin(-1,dp(14),0,0));
 
         LinearLayout target = vertical();
         target.setPadding(dp(16), dp(14), dp(16), dp(16));

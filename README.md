@@ -7,6 +7,14 @@ Native Android ICMP monitoring app, inspired by Termux ping output. Foreground b
 See the [build workflow](.github/workflows/android.yml). The APK is sideloaded outside Google Play.
 Without permanent signing secrets, the workflow produces a debug-signed APK that cannot update a differently-signed installation.
 
+## الإصدار 4.1.1
+
+- استبدال صف أزرار المظهر الثلاثة بأيقونة واحدة صغيرة داخل ترويسة كل صفحة.
+- الرمز يوضح الوضع المختار: شاشة للنظام، شمس للنهاري، قمر لليلي؛ كل ضغطة تنتقل للوضع التالي.
+- وضع النظام هو الافتراضي، والخيار الحالي محفوظ بين عمليات إغلاق التطبيق وفتحه.
+- اختصار نص نتائج فحص الأجهزة المحلية إلى نسبة الفحص وعدد الأجهزة، وإزالة تفاصيل آلية الاكتشاف ورسالة الاستنتاج التقنية.
+- تحسين حاوية الترويسة والأيقونات وتباينها في الوضع النهاري والليلي.
+
 ## الإصدار 4.1.0
 
 - التحكم بالمظهر أصبح ثلاثي الخيارات من جميع الشاشات: «☀ نهاري»، «☾ ليلي»، «🖥 النظام» والافتراضي اتباع إعداد الهاتف.

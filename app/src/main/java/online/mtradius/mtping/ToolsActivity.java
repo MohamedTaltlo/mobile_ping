@@ -130,18 +130,22 @@ public final class ToolsActivity extends Activity {
 
         LinearLayout header=row();
         header.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+        header.setMinimumHeight(dp(65));
+        header.setPadding(dp(8),dp(7),dp(8),dp(7));
+        header.setBackground(surface(CARD,BORDER,18));
+        if(!palette.dark)header.setElevation(dp(2));
         Button menu=button("☰",palette.accentSoft);
         menu.setTextColor(GREEN);menu.setTextSize(21);
         header.addView(menu,new LinearLayout.LayoutParams(dp(54),dp(47)));
-        TextView logo=text("MT_TOOLS",24,WHITE,true);
+        TextView logo=text("MT_TOOLS",23,WHITE,true);
         logo.setTextDirection(View.TEXT_DIRECTION_LTR);
         logo.setGravity(Gravity.RIGHT|Gravity.CENTER_VERTICAL);
         LinearLayout.LayoutParams logoLayout=new LinearLayout.LayoutParams(0,-2,1);
         logoLayout.rightMargin=dp(11);
         header.addView(logo,logoLayout);
+        ThemeSelector.attachIcon(this,header);
         menu.setOnClickListener(v->sidebar.open());
         root.addView(header);
-        ThemeSelector.attach(this,root);
         final String section=page;
         if(section.equals("network")) {
         LinearLayout connection=card(root,"عناوين الشبكة والراوتر");
@@ -236,7 +240,7 @@ public final class ToolsActivity extends Activity {
                 existing.interrupt();
                 scanButton.setEnabled(false);
                 scanButton.setText("جار إيقاف الفحص...");
-                scanLog.setText("تم طلب إيقاف الفحص، وستبقى النتائج التي ظهرت.");
+                scanLog.setText("جار إيقاف الفحص...");
                 return;
             }
             final int ticket=scanGeneration.incrementAndGet();
@@ -246,9 +250,11 @@ public final class ToolsActivity extends Activity {
             scanButton.setBackground(surface(palette.stop,BORDER,12));
             scanProgress.setVisibility(View.VISIBLE);
             scanProgress.setProgress(0);
-            scanLog.setText("جار التحضير للفحص...");
+            scanLog.setText("جار الفحص • 0%");
             lanResults.removeAllViews();
             scanRows.clear();scannedDevices.clear();
+            final java.util.concurrent.atomic.AtomicReference<String> scanProblem=
+                    new java.util.concurrent.atomic.AtomicReference<>();
             Thread worker=new Thread(()->{
                 final Thread workerSelf=Thread.currentThread();
                 boolean interrupted=false;
@@ -277,17 +283,20 @@ public final class ToolsActivity extends Activity {
                                 int pct=total>0?Math.min(100,Math.round(done*100f/total)):100;
                                 scanProgress.setProgress(pct);
                                 scanLog.setText(String.format(Locale.US,
-                                    "جار الفحص: %d / %d  •  %d%%  •  الأجهزة المستجيبة: %d",
-                                    done,total,pct,detected));
+                                    "جار الفحص • %d%% • %d أجهزة",
+                                    pct,Math.max(detected,scanRows.size())));
                             });
                         }
                         @Override public void info(String line){
-                            if(ticket==scanGeneration.get())log(scanLog,line);
+                            // Hide the verbose technique/ARP/MAC explanations.
+                            // Preserve genuine inability to scan as an error.
+                            if(line.startsWith("اتصل بشبكة") || line.startsWith("تعذّر قراءة"))
+                                scanProblem.set(line);
                         }
                     });
                 }catch(InterruptedException ignored){interrupted=true;}
                 catch(Exception e){
-                    if(ticket==scanGeneration.get())log(scanLog,"تعذّر إكمال الفحص: "+e.getMessage());
+                    if(ticket==scanGeneration.get())scanProblem.set("تعذّر الفحص: "+e.getMessage());
                 }finally{
                     final boolean didStop=interrupted||scanStopping||ticket!=scanGeneration.get();
                     post(()->{
@@ -296,10 +305,12 @@ public final class ToolsActivity extends Activity {
                         scanButton.setText("إعادة فحص الأجهزة");
                         scanButton.setBackground(surface(palette.accentSoft,BORDER,12));
                         scanButton.setEnabled(true);
-                        if(didStop)scanLog.setText("تم إيقاف الفحص • الأجهزة المعروضة: "+scanRows.size());
+                        if(didStop)scanLog.setText("تم إيقاف الفحص • "+scanRows.size()+" أجهزة");
+                        else if(scanProblem.get()!=null)
+                            scanLog.setText(scanProblem.get());
                         else{
                             scanProgress.setProgress(100);
-                            scanLog.append("\nاكتمل الفحص • الأجهزة المعروضة: "+scanRows.size());
+                            scanLog.setText("اكتمل الفحص • "+scanRows.size()+" أجهزة");
                         }
                     });
                 }
