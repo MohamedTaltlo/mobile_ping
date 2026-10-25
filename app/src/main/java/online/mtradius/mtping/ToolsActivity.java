@@ -36,6 +36,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 public final class ToolsActivity extends Activity {
     private int BG,CARD,BORDER,WHITE,MUTED,GREEN,RED;
     private ThemePalette palette;
+    private String appliedAppearanceMode;
+    private boolean appliedAppearanceDark;
     private TextView localText, gatewayText, publicText, traceLog, scanLog, ubntLog;
     private LinearLayout wifiDisplay,wifiAdviceResults;
     private TextView wifiStatus;
@@ -107,6 +109,8 @@ public final class ToolsActivity extends Activity {
         ThemePalette.prepareActivity(this);
         super.onCreate(saved);
         palette=ThemePalette.of(this);
+        appliedAppearanceMode=ThemePalette.getMode(this);
+        appliedAppearanceDark=palette.dark;
         BG=palette.bg;CARD=palette.card;BORDER=palette.border;
         WHITE=palette.primary;MUTED=palette.muted;GREEN=palette.accent;
         RED=palette.danger;
@@ -571,6 +575,14 @@ public final class ToolsActivity extends Activity {
                 refreshWifi();
             }
         }
+    }
+
+    @Override protected void onResume(){
+        super.onResume();
+        // Pages can be resumed from an existing back stack after a theme
+        // change on another page; synchronize without changing page/route.
+        if(ThemePalette.synchronizeOnResume(this,
+                appliedAppearanceMode,appliedAppearanceDark))return;
     }
 
     @Override public void onBackPressed(){

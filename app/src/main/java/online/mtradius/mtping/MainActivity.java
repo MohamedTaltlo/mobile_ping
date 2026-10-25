@@ -32,6 +32,9 @@ import java.util.Locale;
 
 public final class MainActivity extends Activity {
     private ThemePalette palette;
+    // Track the actual appearance used to construct this Activity's views.
+    private String appliedAppearanceMode;
+    private boolean appliedAppearanceDark;
     private int BG,CARD,BORDER,WHITE,MUTED,GREEN,RED,ORANGE;
     private final Handler ui = new Handler(Looper.getMainLooper());
     private final Runnable refresh = new Runnable() {
@@ -61,6 +64,8 @@ public final class MainActivity extends Activity {
         ThemePalette.prepareActivity(this);
         super.onCreate(saved);
         palette=ThemePalette.of(this);
+        appliedAppearanceMode=ThemePalette.getMode(this);
+        appliedAppearanceDark=palette.dark;
         BG=palette.bg;CARD=palette.card;BORDER=palette.border;
         WHITE=palette.primary;MUTED=palette.muted;GREEN=palette.accent;
         RED=palette.danger;ORANGE=palette.warning;
@@ -613,6 +618,10 @@ public final class MainActivity extends Activity {
 
     @Override protected void onResume() {
         super.onResume();
+        // Returning from a nested tools screen doesn't recreate this Activity.
+        // Check SharedPreferences again before showing the previous palette.
+        if(ThemePalette.synchronizeOnResume(this,
+                appliedAppearanceMode,appliedAppearanceDark))return;
         ui.removeCallbacks(refresh);
         ui.post(refresh);
     }

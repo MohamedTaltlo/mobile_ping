@@ -43,8 +43,10 @@ final class ThemePalette {
     static void saveMode(Context ctx,String mode) {
         if(!SYSTEM.equals(mode) && !LIGHT.equals(mode) && !DARK.equals(mode))
             throw new IllegalArgumentException("Unknown appearance mode");
+        // Persist before navigating or recreating an Activity. A single
+        // small String preference is written only when the user taps the icon.
         ctx.getSharedPreferences(PREF,Context.MODE_PRIVATE)
-                .edit().putString(KEY,mode).apply();
+                .edit().putString(KEY,mode).commit();
     }
     static boolean isDark(Context ctx) {
         String override=getMode(ctx);
@@ -54,6 +56,26 @@ final class ThemePalette {
                 Configuration.UI_MODE_NIGHT_MASK)==Configuration.UI_MODE_NIGHT_YES;
     }
     static ThemePalette of(Context ctx) {return new ThemePalette(isDark(ctx));}
+
+    /**
+     * A screen restored from the Android back stack may have been built under
+     * a former theme. Recreate that Activity in place, preserving navigation
+     * history and the already-running foreground PingService.
+     *
+     * Mode is checked in addition to palette darkness because selecting
+     * "system" versus "light" changes the header icon even if both are light.
+     */
+    static boolean synchronizeOnResume(Activity activity,String appliedMode,
+                                       boolean appliedDark) {
+        if(activity.isFinishing() || activity.isDestroyed())return false;
+        String latestMode=getMode(activity);
+        boolean latestDark=isDark(activity);
+        if(!AppearanceState.needsRebuild(appliedMode,appliedDark,latestMode,latestDark))
+            return false;
+        activity.recreate();
+        return true;
+    }
+
 
     /** Apply an appropriate native theme before onCreate builds controls. */
     static void prepareActivity(Activity activity) {
