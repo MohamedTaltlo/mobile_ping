@@ -31,6 +31,7 @@ public final class PingService extends Service {
     private static final String ALERT_CHANNEL = "mt_ping_disconnect_v1";
     private static final int MONITOR_ID = 488;
     private static final int ALERT_ID = 489;
+    private static final int RECOVERY_ID = 490;
 
     private final AtomicInteger epoch = new AtomicInteger();
     private final Handler handler = new Handler(Looper.getMainLooper());
@@ -40,6 +41,7 @@ public final class PingService extends Service {
     private volatile long activeOutageId = -1;
     private volatile long lastCompletedMs = -1;
     private volatile boolean warningActive;
+    private volatile long lastMonitorNotificationAt = -1;
     // Fixed starting timestamp for Android SystemUI's own chronometer.
     private volatile long outageStartedWall = -1;
 
@@ -137,7 +139,9 @@ public final class PingService extends Service {
         activeOutageId = -1;
         warningActive = false;
         outageStartedWall = -1;
+        lastMonitorNotificationAt = -1;
         notificationManager().cancel(ALERT_ID);
+        notificationManager().cancel(RECOVERY_ID);
         startForegroundNow("بدء فحص " + host);
         acquireCpu();
 
@@ -159,21 +163,35 @@ public final class PingService extends Service {
                 PingState.Snapshot after = PingState.INSTANCE.snapshot();
 
                 if (!before.isDown() && after.isDown()) {
-                    outageStartedWall = Math.max(1L, System.currentTimeMillis() - after.downMs);
+                    // Only two consecutive lost probes count as an outage.
+                    // Both notifications refer to the exact same monotonic start.
+                    outageStartedWall = after.downStartWall > 0
+                            ? after.downStartWall : System.currentTimeMillis() - after.downMs;
                     activeOutageId = outageStore.begin(host, outageStartedWall);
                     warningActive = true;
                     publishAlert(after, false, true);
-                } else if (before.isDown() && !after.isDown() && activeOutageId > 0) {
+                } else if (before.isDown() && !after.isDown()) {
+                    // Never leave an active disconnect alert/chronometer visible
+                    // after the first successful reply or a probe error.
+                    notificationManager().cancel(ALERT_ID);
                     long duration = lastOutageDuration(after, before.downMs);
                     finishOutage(duration, sample.kind == PingSample.Kind.REPLY ? "recovered" : "error");
-                    if (warningActive) publishAlert(after, true, false);
+                    if (warningActive && sample.kind == PingSample.Kind.REPLY)
+                        publishAlert(after, true, false);
                     warningActive = false;
                     outageStartedWall = -1;
                 }
                 // Keep both platform chronometers untouched while disconnected:
                 // rebuilding the notification every packet makes SystemUI redraw
                 // at different moments and causes visibly out-of-sync counters.
-                if (!after.isDown() || !before.isDown()) publishMonitor(after);
+                if (!after.isDown() || !before.isDown()) {
+                    long monoNow=SystemClock.elapsedRealtime();
+                    boolean transition=before.isDown()!=after.isDown() ||
+                            before.verifyingLoss!=after.verifyingLoss;
+                    if(transition || lastMonitorNotificationAt<0 ||
+                            monoNow-lastMonitorNotificationAt>=1000L)
+                        publishMonitor(after);
+                }
 
                 nextAt += intervalMillis;
                 long now = SystemClock.elapsedRealtime();
@@ -223,12 +241,11 @@ public final class PingService extends Service {
         worker = null;
         if (thread != null) thread.interrupt();
         PingState.Snapshot before = PingState.INSTANCE.snapshot();
-        if (activeOutageId > 0) {
-            finishOutage(before.downMs, reason);
-            publishAlert(before, true, false);
-            warningActive = false;
-            outageStartedWall = -1;
-        }
+        if (activeOutageId > 0) finishOutage(before.downMs, reason);
+        // Service stop is not proof of restored connectivity.
+        notificationManager().cancel(ALERT_ID);
+        warningActive = false;
+        outageStartedWall = -1;
         PingState.INSTANCE.stop();
         if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
         if (userStop) {
@@ -237,6 +254,7 @@ public final class PingService extends Service {
             // Closing a monitoring session removes every recorded outage.
             outageStore.clearSession();
             notificationManager().cancel(ALERT_ID);
+            notificationManager().cancel(RECOVERY_ID);
             lastCompletedMs = -1;
         }
     }
@@ -252,6 +270,14 @@ public final class PingService extends Service {
         long seconds = Math.max(0L, durationMs / 1000L);
         return String.format(Locale.US, "%02d:%02d:%02d",
                 seconds / 3600L, (seconds / 60L) % 60L, seconds % 60L);
+    }
+
+    static String shortDuration(long durationMs) {
+        if (durationMs < 0) return "—";
+        if (durationMs < 1000) {
+            return String.format(Locale.US, "%.2f ثانية", durationMs / 1000.0);
+        }
+        return asClock(durationMs);
     }
 
     private Notification monitorNotice(String details, boolean disconnected) {
@@ -295,7 +321,9 @@ public final class PingService extends Service {
         PingSample last = snapshot.last();
         String details;
         if (snapshot.isDown()) {
-            details = "انقطاع مستمر • " + snapshot.host + " • عداد الفصل يعمل تلقائياً";
+            details = "انقطاع مؤكّد • " + snapshot.host + " • العداد المباشر";
+        } else if (snapshot.verifyingLoss) {
+            details = "نبضة مفقودة • " + snapshot.host + " • جار التأكد من الاتصال";
         } else if (last != null && last.kind == PingSample.Kind.REPLY) {
             details = String.format(Locale.US, "متصل • %.2f مللي ثانية • %s", last.rttMs, snapshot.host);
         } else if (last != null && last.kind == PingSample.Kind.ERROR) {
@@ -304,50 +332,57 @@ public final class PingService extends Service {
             details = "جار فحص " + snapshot.host;
         }
         if (lastCompletedMs >= 0) {
-            details += " • آخر فصل: " + asClock(lastCompletedMs);
+            details += " • آخر فصل: " + shortDuration(lastCompletedMs);
         }
+        lastMonitorNotificationAt = SystemClock.elapsedRealtime();
         notificationManager().notify(MONITOR_ID, monitorNotice(details, snapshot.isDown()));
     }
 
-    private void publishAlert(PingState.Snapshot snapshot, boolean closed, boolean newAlert) {
-        String title;
-        String text;
-        if (!closed) {
-            title = "انقطاع الاتصال • MT_PING";
-            text = "العنوان: " + snapshot.host + " • عداد الفصل المباشر أعلى الإشعار";
-        } else {
-            title = "انتهت متابعة الانقطاع • MT_PING";
-            PingSample last = snapshot.last();
-            if (last != null && last.kind == PingSample.Kind.REPLY) {
-                title = "عاد الاتصال • MT_PING";
-            }
-            text = "العنوان: " + snapshot.host + " • آخر فصل استمر: " +
-                    asClock(Math.max(0L, lastCompletedMs));
+    private void publishAlert(PingState.Snapshot snapshot, boolean recovered, boolean fresh) {
+        final NotificationManager manager=notificationManager();
+        if (!recovered) {
+            // Single lost probes only increment the packet-loss counter.
+            // Never launch an ongoing high-importance notification for those.
+            manager.cancel(RECOVERY_ID);
+            String text="العنوان: "+snapshot.host+
+                    " • انقطاع مؤكّد بعد فقد نبضتين متتاليتين. العداد المباشر في إشعار المراقبة.";
+            Notification alert=new Notification.Builder(this,ALERT_CHANNEL)
+                    .setSmallIcon(R.drawable.ic_launcher)
+                    .setContentTitle("MT_TOOLS • انقطاع الاتصال")
+                    .setContentText(text)
+                    .setStyle(new Notification.BigTextStyle().bigText(text))
+                    .setContentIntent(openIntent())
+                    .setAutoCancel(true)
+                    .setOnlyAlertOnce(true)
+                    // Only the foreground monitor owns a running chronometer.
+                    // An independent SystemUI alert clock was continuing to show
+                    // 00:07 after a single lost packet recovered.
+                    .setShowWhen(true)
+                    .setWhen(System.currentTimeMillis())
+                    .setUsesChronometer(false)
+                    .setColor(0xFFFF6278)
+                    .setCategory(Notification.CATEGORY_STATUS)
+                    .build();
+            manager.notify(ALERT_ID,alert);
+            return;
         }
-        if (newAlert) notificationManager().cancel(ALERT_ID);
-        Notification.Builder builder = new Notification.Builder(this, ALERT_CHANNEL)
+        manager.cancel(ALERT_ID);
+        String text="العنوان: "+snapshot.host+" • مدة الفصل: "+shortDuration(lastCompletedMs);
+        Notification recoveredNotice=new Notification.Builder(this,ALERT_CHANNEL)
                 .setSmallIcon(R.drawable.ic_launcher)
-                .setContentTitle(title)
+                .setContentTitle("MT_TOOLS • عاد الاتصال")
                 .setContentText(text)
                 .setStyle(new Notification.BigTextStyle().bigText(text))
                 .setContentIntent(openIntent())
                 .setAutoCancel(true)
                 .setOnlyAlertOnce(true)
                 .setShowWhen(true)
-                .setColor(closed ? 0xFF3EDAB6 : 0xFFFF6278)
-                .setCategory(Notification.CATEGORY_STATUS);
-        if (!closed) {
-            long started = outageStartedWall > 0 ? outageStartedWall :
-                    Math.max(1L, System.currentTimeMillis() - snapshot.downMs);
-            builder.setWhen(started).setShowWhen(true)
-                    .setUsesChronometer(true).setChronometerCountDown(false);
-        } else {
-            builder.setWhen(System.currentTimeMillis()).setShowWhen(true)
-                    .setUsesChronometer(false);
-        }
-        // The high-importance channel alerts on the transition. Subsequent
-        // updates are silent; the Android system chronometer keeps counting.
-        notificationManager().notify(ALERT_ID, builder.build());
+                .setWhen(System.currentTimeMillis())
+                .setUsesChronometer(false)
+                .setColor(0xFF3EDAB6)
+                .setCategory(Notification.CATEGORY_STATUS)
+                .build();
+        manager.notify(RECOVERY_ID,recoveredNotice);
     }
 
     @Override public void onDestroy() {

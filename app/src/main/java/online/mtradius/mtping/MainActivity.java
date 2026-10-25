@@ -392,9 +392,11 @@ public final class MainActivity extends Activity {
         PingSample last = s.last();
         lastRunning = s.running;
         boolean down = s.running && s.isDown();
+        boolean lostOne = s.running && s.verifyingLoss;
         boolean error = s.running && last != null && last.kind == PingSample.Kind.ERROR;
-        statusText.setText(s.running ? (down ? "●  منقطع" : error ? "●  خطأ" : "●  متصل") : "●  متوقف");
-        statusText.setTextColor(down ? RED : error ? ORANGE : s.running ? GREEN : MUTED);
+        statusText.setText(s.running ? (down ? "●  منقطع" :
+                lostOne ? "●  فقد نبضة" : error ? "●  خطأ" : "●  متصل") : "●  متوقف");
+        statusText.setTextColor(down ? RED : lostOne || error ? ORANGE : s.running ? GREEN : MUTED);
         startButton.setText(s.running ? "■  إيقاف المراقبة" : "▶  بدء المراقبة");
         startButton.setTextColor(s.running ? WHITE : palette.onAccent);
         startButton.setBackground(shape(s.running ? palette.stop : GREEN, 0, 14));
@@ -409,6 +411,11 @@ public final class MainActivity extends Activity {
             heroText.setTextSize(40);
             heroText.setTextColor(RED);
             heroDetail.setText("لا توجد استجابة من " + s.host);
+        } else if (lostOne) {
+            heroText.setText("نبضة مفقودة");
+            heroText.setTextSize(35);
+            heroText.setTextColor(ORANGE);
+            heroDetail.setText("جار التأكد من الاتصال • " + s.host);
         } else if (error) {
             heroText.setText("خطأ الفحص");
             heroText.setTextSize(40);

@@ -15,8 +15,7 @@ final class PingState {
     private long startedAt;
     private long revision;
     private long sent, received, lost, errors;
-    private long downSince = -1;
-    private long completedDownMillis;
+    private final OutageTracker outage = new OutageTracker();
     private double minRtt = Double.POSITIVE_INFINITY, maxRtt, sumRtt;
     private double lastRtt = -1;
     private double totalJitter;
@@ -33,7 +32,8 @@ final class PingState {
     static final class Snapshot {
         final String host;
         final boolean running;
-        final long startedAt, revision, sent, received, lost, errors, downMs, totalDownMs;
+        final long startedAt, revision, sent, received, lost, errors, downMs, totalDownMs, downStartWall;
+        final boolean down, verifyingLoss;
         final double minRtt, maxRtt, avgRtt, jitter;
         final List<PingSample> samples;
         final List<Outage> outages;
@@ -48,8 +48,11 @@ final class PingState {
             this.lost = s.lost;
             this.errors = s.errors;
             long now = SystemClock.elapsedRealtime();
-            this.downMs = s.downSince >= 0 ? Math.max(0, now - s.downSince) : 0;
-            this.totalDownMs = s.completedDownMillis + this.downMs;
+            this.downMs = s.outage.downMs(now);
+            this.totalDownMs = s.outage.totalDownMs(now);
+            this.down = s.outage.isDown();
+            this.verifyingLoss = s.outage.verifyingLoss();
+            this.downStartWall = s.outage.downStartWall();
             this.minRtt = s.received == 0 ? 0 : s.minRtt;
             this.maxRtt = s.maxRtt;
             this.avgRtt = s.received == 0 ? 0 : s.sumRtt / s.received;
@@ -59,7 +62,7 @@ final class PingState {
         }
 
         boolean isDown() {
-            return !samples.isEmpty() && samples.get(samples.size() - 1).kind == PingSample.Kind.TIMEOUT;
+            return down;
         }
 
         PingSample last() {
@@ -72,8 +75,7 @@ final class PingState {
         running = true;
         startedAt = SystemClock.elapsedRealtime();
         sent = received = lost = errors = 0;
-        downSince = -1;
-        completedDownMillis = 0;
+        outage.reset();
         minRtt = Double.POSITIVE_INFINITY;
         maxRtt = sumRtt = totalJitter = 0;
         lastRtt = -1;
@@ -84,12 +86,8 @@ final class PingState {
     }
 
     synchronized void stop() {
-        if (downSince >= 0) {
-            long duration = Math.max(0, SystemClock.elapsedRealtime() - downSince);
-            completedDownMillis += duration;
-            addOutage(System.currentTimeMillis() - duration, duration);
-            downSince = -1;
-        }
+        OutageTracker.Change end=outage.stop(SystemClock.elapsedRealtime());
+        if(end.ended)addOutage(end.startWall,end.durationMs);
         running = false;
         revision++;
     }
@@ -102,7 +100,6 @@ final class PingState {
     synchronized void record(PingSample item) {
         if (!running) return;
         sent++;
-        long now = SystemClock.elapsedRealtime();
         if (item.kind == PingSample.Kind.REPLY) {
             received++;
             minRtt = Math.min(minRtt, item.rttMs);
@@ -113,28 +110,16 @@ final class PingState {
                 jitterSamples++;
             }
             lastRtt = item.rttMs;
-            if (downSince >= 0) {
-                long duration = Math.max(0, now - downSince);
-                completedDownMillis += duration;
-                addOutage(item.wallTime - duration, duration);
-                downSince = -1;
-            }
         } else if (item.kind == PingSample.Kind.TIMEOUT) {
             lost++;
             lastRtt = -1;
-            if (downSince < 0) downSince = now;
         } else {
             errors++;
             lastRtt = -1;
-            // A local probe failure is not evidence of network loss.
-            // Close any previous outage rather than showing an incorrect running timer.
-            if (downSince >= 0) {
-                long duration = Math.max(0, now - downSince);
-                completedDownMillis += duration;
-                addOutage(item.wallTime - duration, duration);
-                downSince = -1;
-            }
         }
+        OutageTracker.Change change=outage.record(item.kind,
+                SystemClock.elapsedRealtime(),System.currentTimeMillis());
+        if(change.ended)addOutage(change.startWall,change.durationMs);
         samples.addLast(item);
         while (samples.size() > 240) samples.removeFirst();
         revision++;
