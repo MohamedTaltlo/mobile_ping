@@ -50,10 +50,13 @@ public final class MainActivity extends Activity {
     private TextView[] stats = new TextView[6];
     private LatencyGraphView graph;
     private long lastRevision = Long.MIN_VALUE;
+    private long lastPacketSequence = -1;
+    private boolean packetsEmptyShown;
     private OutageStore outageStore;
     private boolean lastRunning;
 
     @Override public void onCreate(Bundle saved) {
+        ThemePalette.prepareActivity(this);
         super.onCreate(saved);
         palette=ThemePalette.of(this);
         BG=palette.bg;CARD=palette.card;BORDER=palette.border;
@@ -170,7 +173,7 @@ public final class MainActivity extends Activity {
         statusText.setBackground(shape(CARD,BORDER,30));
         header.addView(statusText);
         root.addView(header);
-        root.addView(new View(this), margin(-1, dp(9), 0, 0));
+        ThemeSelector.attach(this,root);
 
         LinearLayout target = vertical();
         target.setPadding(dp(16), dp(14), dp(16), dp(16));
@@ -322,7 +325,7 @@ public final class MainActivity extends Activity {
         outageCards.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
         root.addView(outageCards);
 
-        addHeading(root, "نتائج النبضات بالتفصيل");
+        addHeading(root, "نتائج النبضات • آخر 60");
         pingCards=vertical();
         pingCards.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
         root.addView(pingCards);
@@ -440,27 +443,42 @@ public final class MainActivity extends Activity {
 
     private void showPackets(List<PingSample> items) {
         if(pingCards==null)return;
-        pingCards.removeAllViews();
         if(items.isEmpty()){
-            LinearLayout card=ResultCards.newCard(this,pingCards);
-            ResultCards.note(this,card,"بانتظار نتائج النبضات...",MUTED);
+            if(!packetsEmptyShown){
+                pingCards.removeAllViews();
+                LinearLayout card=ResultCards.newCard(this,pingCards);
+                ResultCards.note(this,card,"بانتظار نتائج النبضات...",MUTED);
+                packetsEmptyShown=true;
+            }
+            lastPacketSequence=-1;
             return;
         }
+        long newest=items.get(items.size()-1).sequence;
+        if(newest<lastPacketSequence || packetsEmptyShown){
+            pingCards.removeAllViews();
+            lastPacketSequence=-1;
+            packetsEmptyShown=false;
+        }
+        // Only append newly received pulses. Recreating 60 cards every second
+        // would cause jank and make long-running monitoring waste resources.
+        if(newest==lastPacketSequence)return;
         SimpleDateFormat time=new SimpleDateFormat("HH:mm:ss",Locale.US);
-        for(int i=items.size()-1,count=0;i>=0 && count<60;i--,count++) {
+        int start=Math.max(0,items.size()-60);
+        for(int i=start;i<items.size();i++){
             PingSample p=items.get(i);
+            if(p.sequence<=lastPacketSequence)continue;
             ResultCards.ping(this,pingCards,p,time.format(new Date(p.wallTime)));
         }
+        lastPacketSequence=newest;
+        while(pingCards.getChildCount()>60)
+            pingCards.removeViewAt(pingCards.getChildCount()-1);
     }
 
     private void showOutages(List<PingState.Outage> items,long downTime,long errors) {
         if(outageCards==null)return;
         outageCards.removeAllViews();
-        LinearLayout overview=ResultCards.newCard(this,outageCards);
-        ResultCards.title(this,overview,"ملخص جلسة المراقبة");
-        ResultCards.field(this,overview,"مرات الانقطاع",Integer.toString(outageStore.count()),true);
-        ResultCards.field(this,overview,"مدة الانقطاع",duration(downTime),true);
-        if(errors>0)ResultCards.field(this,overview,"أخطاء الفحص",Long.toString(errors),true);
+        ResultCards.outageSummary(this,outageCards,outageStore.count(),duration(downTime),errors);
+        LinearLayout overview=(LinearLayout)outageCards.getChildAt(0);
 
         List<OutageStore.Entry> history=outageStore.recent(50);
         if(history.isEmpty()){

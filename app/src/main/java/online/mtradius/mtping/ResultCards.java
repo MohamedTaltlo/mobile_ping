@@ -30,6 +30,7 @@ final class ResultCards {
         card.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
         card.setPadding(dp(a,14),dp(a,13),dp(a,14),dp(a,14));
         card.setBackground(shape(a,t.panel,t.border,14));
+        if(!t.dark)card.setElevation(dp(a,2));
         LinearLayout.LayoutParams layout=new LinearLayout.LayoutParams(-1,-2);
         layout.bottomMargin=dp(a,9);
         parent.addView(card,layout);
@@ -175,19 +176,92 @@ final class ResultCards {
             else note(a,card,line,ThemePalette.of(a).accent);
         }
     }
+    /**
+     * A ping reply is a short measurement, not a multi-field device record.
+     * Show timestamp, RTT and TTL in a single, accessible RTL row.
+     */
     static void ping(Activity a,LinearLayout parent,PingSample p,String timestamp) {
-        LinearLayout card=newCard(a,parent);
         ThemePalette t=ThemePalette.of(a);
-        title(a,card,"النبضة "+p.sequence+"  •  "+timestamp);
-        if(p.kind==PingSample.Kind.REPLY) {
-            note(a,card,String.format(Locale.US,"%.2f ms",p.rttMs),t.accent);
-            field(a,card,"TTL",Integer.toString(p.ttl),true);
-        }else if(p.kind==PingSample.Kind.TIMEOUT){
-            note(a,card,"انتهت المهلة دون استجابة",t.danger);
-        }else{
-            note(a,card,"خطأ في الفحص",t.warning);
-            if(p.detail!=null)field(a,card,"التفاصيل",p.detail,false);
+        LinearLayout row=new LinearLayout(a);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(a,12),dp(a,8),dp(a,12),dp(a,8));
+        row.setMinimumHeight(dp(a,55));
+        row.setBackground(shape(a,t.panel,t.border,12));
+        LinearLayout.LayoutParams layout=new LinearLayout.LayoutParams(-1,-2);
+        layout.bottomMargin=dp(a,6);
+        parent.addView(row,0,layout);
+
+        String item="#" + p.sequence + "  •  " + timestamp;
+        TextView number=line(a,item,12,t.primary,true,true);
+        number.setGravity(Gravity.RIGHT|Gravity.CENTER_VERTICAL);
+        number.setSingleLine(true);
+        number.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        LinearLayout.LayoutParams n=new LinearLayout.LayoutParams(0,-2,1.85f);
+        row.addView(number,n);
+
+        String measurement;
+        int measureColor=t.accent;
+        if(p.kind==PingSample.Kind.REPLY){
+            measurement=String.format(Locale.US,"%.2f ms",p.rttMs);
+        } else if(p.kind==PingSample.Kind.TIMEOUT) {
+            measurement="منقطع";
+            measureColor=t.danger;
+        } else {
+            measurement="خطأ";
+            measureColor=t.warning;
         }
+        TextView value=line(a,measurement,14,measureColor,true,
+                p.kind==PingSample.Kind.REPLY);
+        value.setGravity(Gravity.CENTER);
+        value.setSingleLine(true);
+        LinearLayout.LayoutParams v=new LinearLayout.LayoutParams(0,-2,1.18f);
+        row.addView(value,v);
+
+        TextView ttl=line(a,p.kind==PingSample.Kind.REPLY?"TTL "+p.ttl:"—",
+                11,t.muted,false,true);
+        ttl.setGravity(Gravity.LEFT|Gravity.CENTER_VERTICAL);
+        ttl.setSingleLine(true);
+        row.addView(ttl,new LinearLayout.LayoutParams(0,-2,.85f));
+        if(p.kind==PingSample.Kind.ERROR && p.detail!=null && !p.detail.isEmpty())
+            row.setContentDescription("النبضة "+p.sequence+"؛ "+p.detail);
+    }
+
+    static void outageSummary(Activity a,LinearLayout parent,int count,
+                              String duration,long errors) {
+        ThemePalette t=ThemePalette.of(a);
+        LinearLayout card=newCard(a,parent);
+        title(a,card,"ملخص جلسة المراقبة");
+        LinearLayout metrics=new LinearLayout(a);
+        metrics.setOrientation(LinearLayout.HORIZONTAL);
+        metrics.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+        LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);
+        lp.topMargin=dp(a,10);
+        card.addView(metrics,lp);
+        summaryMetric(a,metrics,"مرات الفصل",Integer.toString(count),t.primary);
+        summaryMetric(a,metrics,"مدة الانقطاع",duration,t.accent);
+        if(errors>0)summaryMetric(a,metrics,"أخطاء الفحص",Long.toString(errors),t.warning);
+    }
+    private static void summaryMetric(Activity a,LinearLayout row,String label,
+                                     String value,int color) {
+        ThemePalette t=ThemePalette.of(a);
+        LinearLayout block=new LinearLayout(a);
+        block.setOrientation(LinearLayout.VERTICAL);
+        block.setGravity(Gravity.CENTER);
+        block.setPadding(dp(a,4),dp(a,9),dp(a,4),dp(a,9));
+        block.setBackground(shape(a,t.card,t.border,10));
+        LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(0,-2,1f);
+        p.leftMargin=dp(a,4);p.rightMargin=dp(a,4);
+        row.addView(block,p);
+        TextView name=line(a,label,11,t.muted,false,false);
+        name.setGravity(Gravity.CENTER);
+        block.addView(name);
+        TextView result=line(a,value,15,color,true,true);
+        result.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams val=new LinearLayout.LayoutParams(-1,-2);
+        val.topMargin=dp(a,5);
+        block.addView(result,val);
     }
     static void outage(Activity a,LinearLayout parent,String heading,
                        String address,String start,String length,String outcome) {

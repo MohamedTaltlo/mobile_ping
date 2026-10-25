@@ -104,6 +104,7 @@ public final class ToolsActivity extends Activity {
         try{startActivity(browser);}catch(Exception e){android.widget.Toast.makeText(this,"تعذّر فتح المتصفح",android.widget.Toast.LENGTH_SHORT).show();}
     }
     @Override public void onCreate(Bundle saved){
+        ThemePalette.prepareActivity(this);
         super.onCreate(saved);
         palette=ThemePalette.of(this);
         BG=palette.bg;CARD=palette.card;BORDER=palette.border;
@@ -140,6 +141,7 @@ public final class ToolsActivity extends Activity {
         header.addView(logo,logoLayout);
         menu.setOnClickListener(v->sidebar.open());
         root.addView(header);
+        ThemeSelector.attach(this,root);
         final String section=page;
         if(section.equals("network")) {
         LinearLayout connection=card(root,"عناوين الشبكة والراوتر");

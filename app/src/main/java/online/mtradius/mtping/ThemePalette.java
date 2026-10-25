@@ -2,13 +2,19 @@ package online.mtradius.mtping;
 
 import android.app.Activity;
 import android.content.Context;
+import android.content.SharedPreferences;
 import android.content.res.Configuration;
 import android.graphics.Color;
 import android.view.View;
 import android.view.Window;
 
-/** One application-wide palette. Follows Android's current light/dark setting. */
+/**
+ * Central palette shared by screens. The default follows the phone; the user
+ * may explicitly select day or night, persisted across app restarts.
+ */
 final class ThemePalette {
+    static final String SYSTEM="system", LIGHT="light", DARK="dark";
+    private static final String PREF="appearance", KEY="mode";
     final boolean dark;
     final int bg, card, border, primary, muted, accent, accentSoft,
               panel, danger, warning, stop, onAccent, grid, label;
@@ -30,10 +36,30 @@ final class ThemePalette {
         }
     }
 
-    static ThemePalette of(Context ctx) {
-        boolean night=(ctx.getResources().getConfiguration().uiMode &
+    static String getMode(Context ctx) {
+        return ctx.getSharedPreferences(PREF,Context.MODE_PRIVATE)
+                .getString(KEY,SYSTEM);
+    }
+    static void saveMode(Context ctx,String mode) {
+        if(!SYSTEM.equals(mode) && !LIGHT.equals(mode) && !DARK.equals(mode))
+            throw new IllegalArgumentException("Unknown appearance mode");
+        ctx.getSharedPreferences(PREF,Context.MODE_PRIVATE)
+                .edit().putString(KEY,mode).apply();
+    }
+    static boolean isDark(Context ctx) {
+        String override=getMode(ctx);
+        if(DARK.equals(override))return true;
+        if(LIGHT.equals(override))return false;
+        return (ctx.getResources().getConfiguration().uiMode &
                 Configuration.UI_MODE_NIGHT_MASK)==Configuration.UI_MODE_NIGHT_YES;
-        return new ThemePalette(night);
+    }
+    static ThemePalette of(Context ctx) {return new ThemePalette(isDark(ctx));}
+
+    /** Apply an appropriate native theme before onCreate builds controls. */
+    static void prepareActivity(Activity activity) {
+        activity.setTheme(isDark(activity)
+                ? android.R.style.Theme_Material_NoActionBar
+                : android.R.style.Theme_Material_Light_NoActionBar);
     }
 
     static void applyWindow(Activity activity,ThemePalette palette) {
