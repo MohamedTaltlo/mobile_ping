@@ -17,7 +17,7 @@ final class AppFooter {
         int year = Calendar.getInstance().get(Calendar.YEAR);
         footer.setText("Developed by: MT_RADIUS 2019-" + year);
         footer.setTextSize(12);
-        footer.setTextColor(0xFF90A2B8);
+        footer.setTextColor(ThemePalette.of(activity).muted);
         footer.setTextDirection(android.view.View.TEXT_DIRECTION_LTR);
         footer.setGravity(Gravity.CENTER);
         footer.setTypeface(Typeface.DEFAULT, Typeface.BOLD);

@@ -31,14 +31,8 @@ import java.util.List;
 import java.util.Locale;
 
 public final class MainActivity extends Activity {
-    private static final int BG = 0xFF07121E;
-    private static final int CARD = 0xFF101F30;
-    private static final int BORDER = 0xFF20364B;
-    private static final int WHITE = 0xFFF1F5F9;
-    private static final int MUTED = 0xFF90A2B8;
-    private static final int GREEN = 0xFF3EDAB6;
-    private static final int RED = 0xFFFF6278;
-    private static final int ORANGE = 0xFFFFC36A;
+    private ThemePalette palette;
+    private int BG,CARD,BORDER,WHITE,MUTED,GREEN,RED,ORANGE;
     private final Handler ui = new Handler(Looper.getMainLooper());
     private final Runnable refresh = new Runnable() {
         @Override public void run() {
@@ -51,7 +45,8 @@ public final class MainActivity extends Activity {
     private EditText hostInput;
     private Button startButton;
     private EditText intervalInput;
-    private TextView statusText, heroText, heroDetail, outageText, logText, outageHistory;
+    private TextView statusText, heroText, heroDetail, outageText;
+    private LinearLayout pingCards, outageCards;
     private TextView[] stats = new TextView[6];
     private LatencyGraphView graph;
     private long lastRevision = Long.MIN_VALUE;
@@ -60,8 +55,11 @@ public final class MainActivity extends Activity {
 
     @Override public void onCreate(Bundle saved) {
         super.onCreate(saved);
-        getWindow().setStatusBarColor(BG);
-        getWindow().setNavigationBarColor(BG);
+        palette=ThemePalette.of(this);
+        BG=palette.bg;CARD=palette.card;BORDER=palette.border;
+        WHITE=palette.primary;MUTED=palette.muted;GREEN=palette.accent;
+        RED=palette.danger;ORANGE=palette.warning;
+        ThemePalette.applyWindow(this,palette);
         getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
         getWindow().getDecorView().setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
         outageStore = new OutageStore(this);
@@ -191,7 +189,7 @@ public final class MainActivity extends Activity {
         hostInput.setHint("10.0.0.1");
         hostInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
         hostInput.setImeOptions(EditorInfo.IME_ACTION_DONE | EditorInfo.IME_FLAG_NO_EXTRACT_UI);
-        hostInput.setBackground(shape(0xFF091826, BORDER, 12));
+        hostInput.setBackground(shape(palette.panel, BORDER, 12));
         hostInput.setPadding(dp(12), dp(11), dp(12), dp(11));
         LinearLayout.LayoutParams ip = new LinearLayout.LayoutParams(0, dp(52), 1);
         ip.rightMargin = dp(9);
@@ -208,7 +206,7 @@ public final class MainActivity extends Activity {
         intervalInput.setGravity(Gravity.CENTER);
         intervalInput.setHint("1000");
         intervalInput.setHintTextColor(MUTED);
-        intervalInput.setBackground(shape(0xFF173245, BORDER, 12));
+        intervalInput.setBackground(shape(palette.accentSoft, BORDER, 12));
         fields.addView(intervalInput, new LinearLayout.LayoutParams(dp(94), dp(52)));
         intervalInput.setOnEditorActionListener((view, actionId, event) -> {
             if(actionId == EditorInfo.IME_ACTION_DONE) {
@@ -246,7 +244,7 @@ public final class MainActivity extends Activity {
             option.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
             option.setGravity(Gravity.CENTER);
             option.setPadding(dp(5), 0, dp(5), 0);
-            option.setBackground(shape(0xFF173245, BORDER, 12));
+            option.setBackground(shape(palette.accentSoft, BORDER, 12));
             option.setMinimumHeight(dp(49));
             LinearLayout.LayoutParams pp = new LinearLayout.LayoutParams(
                     0, dp(49), i == 2 ? 1.75f : 1.05f);
@@ -269,7 +267,7 @@ public final class MainActivity extends Activity {
         startButton = new Button(this);
         startButton.setAllCaps(false);
         startButton.setText("▶  بدء المراقبة");
-        startButton.setTextColor(BG);
+        startButton.setTextColor(palette.onAccent);
         startButton.setTextSize(14);
         startButton.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         startButton.setBackground(shape(GREEN, 0, 14));
@@ -320,21 +318,14 @@ public final class MainActivity extends Activity {
         root.addView(graphCard);
 
         addHeading(root, "سجل الفصل للجلسة الحالية");
-        outageHistory = txt("لم يتم تسجيل أي انقطاع حتى الآن.", 12, MUTED, false);
-        outageHistory.setPadding(dp(15), dp(12), dp(15), dp(12));
-        outageHistory.setBackground(shape(CARD, BORDER, 16));
-        root.addView(outageHistory);
-        outageHistory.setTextIsSelectable(true);
+        outageCards=vertical();
+        outageCards.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+        root.addView(outageCards);
 
         addHeading(root, "نتائج النبضات بالتفصيل");
-        logText = txt("بانتظار نتائج النبضات...", 12, GREEN, false);
-        logText.setTypeface(Typeface.MONOSPACE);
-        logText.setTextDirection(View.TEXT_DIRECTION_RTL);
-        logText.setGravity(Gravity.RIGHT);
-        logText.setPadding(dp(13), dp(14), dp(13), dp(14));
-        logText.setBackground(shape(0xFF030D16, BORDER, 16));
-        logText.setTextIsSelectable(true);
-        root.addView(logText);
+        pingCards=vertical();
+        pingCards.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+        root.addView(pingCards);
         AppFooter.add(this,root);
     }
 
@@ -397,8 +388,8 @@ public final class MainActivity extends Activity {
         statusText.setText(s.running ? (down ? "●  منقطع" : error ? "●  خطأ" : "●  متصل") : "●  متوقف");
         statusText.setTextColor(down ? RED : error ? ORANGE : s.running ? GREEN : MUTED);
         startButton.setText(s.running ? "■  إيقاف المراقبة" : "▶  بدء المراقبة");
-        startButton.setTextColor(s.running ? WHITE : BG);
-        startButton.setBackground(shape(s.running ? 0xFFB33B50 : GREEN, 0, 14));
+        startButton.setTextColor(s.running ? WHITE : palette.onAccent);
+        startButton.setBackground(shape(s.running ? palette.stop : GREEN, 0, 14));
         hostInput.setEnabled(!s.running);
         intervalInput.setEnabled(!s.running);
         if (!s.running && last == null) {
@@ -448,58 +439,49 @@ public final class MainActivity extends Activity {
     }
 
     private void showPackets(List<PingSample> items) {
-        if (items.isEmpty()) {
-            logText.setText("بانتظار نتائج النبضات...");
+        if(pingCards==null)return;
+        pingCards.removeAllViews();
+        if(items.isEmpty()){
+            LinearLayout card=ResultCards.newCard(this,pingCards);
+            ResultCards.note(this,card,"بانتظار نتائج النبضات...",MUTED);
             return;
         }
-        SimpleDateFormat date = new SimpleDateFormat("HH:mm:ss", Locale.US);
-        StringBuilder buffer = new StringBuilder();
-        for (int i = items.size() - 1, count = 0; i >= 0 && count < 90; i--, count++) {
-            PingSample p = items.get(i);
-            buffer.append(date.format(new Date(p.wallTime)))
-                    .append("  #").append(p.sequence).append("  ");
-            if (p.kind == PingSample.Kind.REPLY) {
-                buffer.append(String.format(Locale.US, "%.2f مللي ثانية  TTL=%d", p.rttMs, p.ttl));
-            } else if (p.kind == PingSample.Kind.TIMEOUT) {
-                buffer.append("✖ انتهت المهلة دون استجابة");
-            } else {
-                buffer.append("خطأ في الفحص: ").append(p.detail);
-            }
-            buffer.append('\n');
+        SimpleDateFormat time=new SimpleDateFormat("HH:mm:ss",Locale.US);
+        for(int i=items.size()-1,count=0;i>=0 && count<60;i--,count++) {
+            PingSample p=items.get(i);
+            ResultCards.ping(this,pingCards,p,time.format(new Date(p.wallTime)));
         }
-        logText.setText(buffer.toString());
     }
 
-    private void showOutages(List<PingState.Outage> items, long downTime, long errors) {
-        SimpleDateFormat time = new SimpleDateFormat("yyyy/MM/dd  HH:mm:ss", Locale.US);
-        List<OutageStore.Entry> history = outageStore.recent(50);
-        StringBuilder b = new StringBuilder();
-        b.append("مرات الفصل خلال المراقبة الحالية: ").append(outageStore.count())
-                .append("  •  مدة الفصل بهذه الجلسة: ").append(duration(downTime))
-                .append("  •  أخطاء الفحص: ").append(errors).append("\n");
-        if (history.isEmpty()) {
-            b.append("\nلم يتم تسجيل أي انقطاع حتى الآن.");
-        } else {
-            int index = 0;
-            for (OutageStore.Entry e : history) {
-                if (++index > 20) break;
-                String cause;
-                if ("active".equals(e.outcome)) cause = "الانقطاع مستمر";
-                else if ("recovered".equals(e.outcome)) cause = "عاد الاتصال";
-                else if ("stopped".equals(e.outcome)) cause = "توقّف الرصد";
-                else if ("error".equals(e.outcome)) cause = "تعذّر الفحص";
-                else cause = "انقطع الرصد قبل التأكد من العودة";
-                long measured = e.durationMs;
-                if (e.active() && PingState.INSTANCE.snapshot().running) {
-                    measured = PingState.INSTANCE.snapshot().downMs;
-                }
-                b.append("\n").append(index).append(" - ").append(e.host)
-                        .append("\n    البداية: ").append(time.format(new Date(e.beganAt)))
-                        .append("\n    المدة: ").append(duration(measured))
-                        .append("  •  ").append(cause).append("\n");
-            }
+    private void showOutages(List<PingState.Outage> items,long downTime,long errors) {
+        if(outageCards==null)return;
+        outageCards.removeAllViews();
+        LinearLayout overview=ResultCards.newCard(this,outageCards);
+        ResultCards.title(this,overview,"ملخص جلسة المراقبة");
+        ResultCards.field(this,overview,"مرات الانقطاع",Integer.toString(outageStore.count()),true);
+        ResultCards.field(this,overview,"مدة الانقطاع",duration(downTime),true);
+        if(errors>0)ResultCards.field(this,overview,"أخطاء الفحص",Long.toString(errors),true);
+
+        List<OutageStore.Entry> history=outageStore.recent(50);
+        if(history.isEmpty()){
+            ResultCards.note(this,overview,"لم يتم تسجيل أي انقطاع حتى الآن.",MUTED);
+            return;
         }
-        outageHistory.setText(b.toString());
+        SimpleDateFormat date=new SimpleDateFormat("yyyy/MM/dd HH:mm:ss",Locale.US);
+        for(int i=0;i<history.size()&&i<20;i++){
+            OutageStore.Entry e=history.get(i);
+            String state;
+            if("active".equals(e.outcome))state="الانقطاع مستمر";
+            else if("recovered".equals(e.outcome))state="عاد الاتصال";
+            else if("stopped".equals(e.outcome))state="توقفت المراقبة";
+            else if("error".equals(e.outcome))state="خطأ أثناء الفحص";
+            else state="انقطع الرصد قبل التأكد من العودة";
+            long measured=e.durationMs;
+            if(e.active() && PingState.INSTANCE.snapshot().running)
+                measured=PingState.INSTANCE.snapshot().downMs;
+            ResultCards.outage(this,outageCards,"الانقطاع رقم "+(i+1),
+                    e.host,date.format(new Date(e.beganAt)),duration(measured),state);
+        }
     }
 
     @Override protected void onResume() {

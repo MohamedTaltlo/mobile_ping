@@ -22,10 +22,13 @@ final class Sidebar {
     private View dim;
     private int drawerWidth;
     private boolean opening, closing;
-    private static final int BG=0xFF07121E,CARD=0xFF101F30,BORDER=0xFF20364B,
-            GREEN=0xFF3EDAB6,WHITE=0xFFF1F5F9,MUTED=0xFF90A2B8;
+    private final int BG,CARD,BORDER,GREEN,WHITE,MUTED,SELECTED;
     private Sidebar(Activity activity,DrawerOverlay overlay,String active){
         this.activity=activity;this.overlay=overlay;this.active=active;
+        ThemePalette theme=ThemePalette.of(activity);
+        BG=theme.bg;CARD=theme.card;BORDER=theme.border;
+        GREEN=theme.accent;WHITE=theme.primary;MUTED=theme.muted;
+        SELECTED=theme.accentSoft;
     }
     private int dp(int px){return Math.round(px*activity.getResources().getDisplayMetrics().density);}
     private GradientDrawable bg(int color,int border){
@@ -154,7 +157,7 @@ final class Sidebar {
         item.setGravity(Gravity.CENTER_VERTICAL|Gravity.RIGHT);
         item.setPadding(dp(13),0,dp(12),0);
         item.setTextColor(page.equals(active)?GREEN:WHITE);
-        item.setBackground(bg(page.equals(active)?0xFF173245:CARD,
+        item.setBackground(bg(page.equals(active)?SELECTED:CARD,
                     page.equals(active)?BORDER:0));
         layout.addView(item,new LinearLayout.LayoutParams(-1,dp(56)));
         if(!page.equals(active))item.setOnClickListener(v->navigate(page));

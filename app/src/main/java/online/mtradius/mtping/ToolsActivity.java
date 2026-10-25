@@ -34,22 +34,23 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 /** Separate service technician page. Network scans run off the UI thread. */
 public final class ToolsActivity extends Activity {
-    private static final int BG=0xFF07121E, CARD=0xFF101F30, BORDER=0xFF20364B,
-            WHITE=0xFFF1F5F9, MUTED=0xFF90A2B8, GREEN=0xFF3EDAB6, RED=0xFFFF6278;
+    private int BG,CARD,BORDER,WHITE,MUTED,GREEN,RED;
+    private ThemePalette palette;
     private TextView localText, gatewayText, publicText, traceLog, scanLog, ubntLog;
-    private TextView wifiText, wifiAdvice;
+    private LinearLayout wifiDisplay,wifiAdviceResults;
+    private TextView wifiStatus;
     private static final int WIFI_LOCATION_REQUEST = 231;
     private final Handler wifiHandler = new Handler(Looper.getMainLooper());
     private BroadcastReceiver wifiReceiver;
     private Runnable wifiFallback;
     private int wifiScanGeneration = 0;
-    private LinearLayout lanResults, ubntResults;
+    private LinearLayout lanResults, ubntResults, traceResults;
     private EditText traceHost;
     private volatile boolean closed;
     private volatile int generation;
     private NetworkTools.Connection current;
-    private final Map<String,TextView> ubntRows=new LinkedHashMap<>();
-    private final Map<String,TextView> scanRows=new LinkedHashMap<>();
+    private final Map<String,LinearLayout> ubntRows=new LinkedHashMap<>();
+    private final Map<String,LinearLayout> scanRows=new LinkedHashMap<>();
     private final Map<String,LanScanner.Device> scannedDevices=new LinkedHashMap<>();
     private volatile Thread scanThread;
     private volatile Thread portsThread;
@@ -71,6 +72,7 @@ public final class ToolsActivity extends Activity {
         t.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
         t.setTextDirection(View.TEXT_DIRECTION_RTL);
         t.setGravity(Gravity.RIGHT);
+        t.setLineSpacing(dp(3),1.09f);
         return t;
     }
     private LinearLayout.LayoutParams margins(int w,int h,int top,int bottom){
@@ -85,7 +87,8 @@ public final class ToolsActivity extends Activity {
         return box;
     }
     private Button button(String title,int background){
-        Button b=new Button(this);b.setText(title);b.setAllCaps(false);b.setTextColor(WHITE);
+        Button b=new Button(this);b.setText(title);b.setAllCaps(false);
+        b.setTextColor(background==palette.accentSoft ? GREEN : WHITE);
         b.setBackground(surface(background,BORDER,12));return b;
     }
     private void post(Runnable r){runOnUiThread(()->{if(!closed)r.run();});}
@@ -102,7 +105,11 @@ public final class ToolsActivity extends Activity {
     }
     @Override public void onCreate(Bundle saved){
         super.onCreate(saved);
-        getWindow().setStatusBarColor(BG);getWindow().setNavigationBarColor(BG);
+        palette=ThemePalette.of(this);
+        BG=palette.bg;CARD=palette.card;BORDER=palette.border;
+        WHITE=palette.primary;MUTED=palette.muted;GREEN=palette.accent;
+        RED=palette.danger;
+        ThemePalette.applyWindow(this,palette);
         getWindow().getDecorView().setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
         ScrollView scroll=new ScrollView(this);scroll.setBackgroundColor(BG);scroll.setFillViewport(true);
         if(Build.VERSION.SDK_INT>=35){
@@ -122,7 +129,7 @@ public final class ToolsActivity extends Activity {
 
         LinearLayout header=row();
         header.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
-        Button menu=button("☰",0xFF173245);
+        Button menu=button("☰",palette.accentSoft);
         menu.setTextColor(GREEN);menu.setTextSize(21);
         header.addView(menu,new LinearLayout.LayoutParams(dp(54),dp(47)));
         TextView logo=text("MT_TOOLS",24,WHITE,true);
@@ -142,11 +149,11 @@ public final class ToolsActivity extends Activity {
         connection.addView(localText,margins(-1,-2,2,8));
         connection.addView(gatewayText,margins(-1,-2,0,8));
         gatewayText.setPadding(dp(9),dp(12),dp(9),dp(12));
-        gatewayText.setBackground(surface(0xFF173245,BORDER,10));
+        gatewayText.setBackground(surface(palette.accentSoft,BORDER,10));
         gatewayText.setOnClickListener(v->{if(current!=null && !current.gateway.isEmpty())openRouter(current.gateway);});
 
         connection.addView(publicText,margins(-1,-2,0,12));
-        Button refresh=button("تحديث عناوين الشبكة",0xFF173245);
+        Button refresh=button("تحديث عناوين الشبكة",palette.accentSoft);
         connection.addView(refresh,new LinearLayout.LayoutParams(-1,dp(48)));
         refresh.setOnClickListener(v->{refreshConnection();refreshWifi();});
         refreshConnection();
@@ -155,14 +162,14 @@ public final class ToolsActivity extends Activity {
         wifiDivider.setBackgroundColor(BORDER);
         connection.addView(wifiDivider,margins(-1,dp(1),18,17));
         connection.addView(text("التردد والقناة الحالية",16,WHITE,true),margins(-1,-2,0,11));
-        wifiText=text("",14,WHITE,false);
-        wifiText.setTextIsSelectable(true);
-        connection.addView(wifiText,margins(-1,-2,0,12));
-        Button wifiChannelButton=button("تحليل القنوات المحيطة",0xFF173245);
+        wifiDisplay=col();
+        connection.addView(wifiDisplay,margins(-1,-2,0,12));
+        Button wifiChannelButton=button("تحليل القنوات المحيطة",palette.accentSoft);
         connection.addView(wifiChannelButton,new LinearLayout.LayoutParams(-1,dp(48)));
-        wifiAdvice=text("اضغط تحليل القنوات للحصول على اقتراح حسب الشبكات القريبة.",12,MUTED,false);
-        wifiAdvice.setTextIsSelectable(true);
-        connection.addView(wifiAdvice,margins(-1,-2,10,0));
+        wifiStatus=text("اضغط تحليل القنوات لعرض النتيجة.",12,MUTED,false);
+        connection.addView(wifiStatus,margins(-1,-2,10,0));
+        wifiAdviceResults=col();
+        connection.addView(wifiAdviceResults,margins(-1,-2,10,0));
         wifiChannelButton.setOnClickListener(v->{
             // Always obtain location permission for a real AP survey on both
             // 2.4 and 5 GHz. The 5 GHz channel recommendation remains fixed.
@@ -187,22 +194,19 @@ public final class ToolsActivity extends Activity {
         traceHost.setTextDirection(View.TEXT_DIRECTION_LTR);
         traceHost.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_URI);
         tracer.addView(traceHost,margins(-1,dp(48),8,8));
-        Button route=button("ابدأ تتبّع المسار",0xFF173245);
+        Button route=button("ابدأ تتبّع المسار",palette.accentSoft);
         tracer.addView(route,new LinearLayout.LayoutParams(-1,dp(48)));
-        traceLog=text("ستظهر القفزات التي تستجيب، وقد تحجب بعض الشبكات رسائل ICMP.",12,GREEN,false);
-        traceLog.setTypeface(Typeface.MONOSPACE);traceLog.setTextIsSelectable(true);
-        traceLog.setTextDirection(View.TEXT_DIRECTION_LTR);
-        traceLog.setGravity(Gravity.LEFT);
-        tracer.addView(traceLog,margins(-1,-2,12,0));
+        traceResults=col();
+        tracer.addView(traceResults,margins(-1,-2,12,0));
         route.setOnClickListener(v->{
             String host=traceHost.getText().toString().trim();
             if(!PingService.validTarget(host)){traceHost.setError("أدخل عنواناً صالحاً");return;}
             final int ticket=++generation;
-            route.setEnabled(false);traceLog.setText("");
+            route.setEnabled(false);traceResults.removeAllViews();
             new Thread(()->{
                 try{
-                    NetworkTools.traceroute(host,line->{if(ticket==generation)log(traceLog,line);});
-                }catch(Exception e){log(traceLog,"فشل التتبع: "+e.getMessage());}
+                    NetworkTools.traceroute(host,line->{if(ticket==generation)post(()->ResultCards.trace(this,traceResults,line));});
+                }catch(Exception e){post(()->ResultCards.trace(this,traceResults,"فشل التتبع: "+e.getMessage()));}
                 post(()->route.setEnabled(true));
             },"MT_TOOLS-trace").start();
         });
@@ -212,7 +216,7 @@ public final class ToolsActivity extends Activity {
         LinearLayout scan=card(root,"فحص الأجهزة المحلية");
 
 
-        Button scanButton=button("بدء كشف الأجهزة",0xFF173245);
+        Button scanButton=button("بدء كشف الأجهزة",palette.accentSoft);
         scan.addView(scanButton,margins(-1,dp(50),12,0));
         ProgressBar scanProgress=new ProgressBar(this,null,android.R.attr.progressBarStyleHorizontal);
         scanProgress.setMax(100);
@@ -237,7 +241,7 @@ public final class ToolsActivity extends Activity {
             scanStopping=false;
             final NetworkTools.Connection net=NetworkTools.connection(this);
             scanButton.setText("■ إيقاف الفحص");
-            scanButton.setBackground(surface(0xFF9D3A4E,BORDER,12));
+            scanButton.setBackground(surface(palette.stop,BORDER,12));
             scanProgress.setVisibility(View.VISIBLE);
             scanProgress.setProgress(0);
             scanLog.setText("جار التحضير للفحص...");
@@ -255,26 +259,13 @@ public final class ToolsActivity extends Activity {
                                 LanScanner.Device merged=LanScanner.Device.merge(
                                         scannedDevices.get(result.ip),result);
                                 scannedDevices.put(result.ip,merged);
-                                TextView item=scanRows.get(result.ip);
+                                LinearLayout item=scanRows.get(result.ip);
                                 if(item==null){
-                                    item=text("",13,GREEN,false);
-                                    item.setPadding(dp(12),dp(12),dp(12),dp(12));
-                                    item.setBackground(surface(BG,BORDER,11));
+                                    item=ResultCards.newCard(ToolsActivity.this,lanResults);
                                     scanRows.put(result.ip,item);
-                                    lanResults.addView(item,margins(-1,-2,5,0));
                                 }
-                                String prefix=merged.self?"▣  ":merged.gateway?"◈  ":"●  ";
-                                String mac=merged.mac==null?"":merged.mac.trim();
-                                if(mac.equalsIgnoreCase("غير متاح") ||
-                                   mac.equalsIgnoreCase("unavailable") ||
-                                   mac.equals("00:00:00:00:00:00")) mac="";
-                                String details=prefix+merged.displayName()+"  •  "+merged.ip+
-                                    "\n"+merged.kind()+
-                                    (merged.latency>=0?String.format(Locale.US,"  |  %.2f ms",merged.latency):"")+
-                                    (mac.isEmpty()?"":"\nالماك: "+mac+
-                                        (merged.vendor.isEmpty()?"":"  |  "+merged.vendor));
-                                item.setText(details);
-                                if(!merged.self)item.setOnClickListener(z->openRouter(merged.ip));
+                                ResultCards.lan(ToolsActivity.this,item,merged,
+                                        merged.self?null:()->openRouter(merged.ip));
                             });
                         }
                         @Override public void progress(int done,int total,int detected){
@@ -301,7 +292,7 @@ public final class ToolsActivity extends Activity {
                         if(scanThread==workerSelf)scanThread=null;
                         scanStopping=false;
                         scanButton.setText("إعادة فحص الأجهزة");
-                        scanButton.setBackground(surface(0xFF173245,BORDER,12));
+                        scanButton.setBackground(surface(palette.accentSoft,BORDER,12));
                         scanButton.setEnabled(true);
                         if(didStop)scanLog.setText("تم إيقاف الفحص • الأجهزة المعروضة: "+scanRows.size());
                         else{
@@ -317,7 +308,7 @@ public final class ToolsActivity extends Activity {
         if(section.equals("ubnt")) {
         LinearLayout ubnt=card(root,"اكتشاف أجهزة Ubiquiti • UBNT");
 
-        Button find=button("بدء UBNT Discovery",0xFF173245);
+        Button find=button("بدء UBNT Discovery",palette.accentSoft);
         ubnt.addView(find,margins(-1,dp(48),10,0));
         ubntLog=text("",12,MUTED,false);ubnt.addView(ubntLog,margins(-1,-2,8,0));
         ubntResults=col();ubnt.addView(ubntResults);
@@ -328,16 +319,12 @@ public final class ToolsActivity extends Activity {
                 try{
                     UbntDiscovery.scan(this,current,d->post(()->{
                         String key=d.mac.isEmpty()?d.address:d.mac;
-                        TextView tile=ubntRows.get(key);
+                        LinearLayout tile=ubntRows.get(key);
                         if(tile==null){
-                            tile=text("",12,GREEN,false);
-                            tile.setPadding(dp(10),dp(12),dp(10),dp(12));
-                            tile.setBackground(surface(BG,BORDER,10));
+                            tile=ResultCards.newCard(this,ubntResults);
                             ubntRows.put(key,tile);
-                            ubntResults.addView(tile,margins(-1,-2,5,0));
                         }
-                        tile.setText(d.describe()+"\nاضغط لفتح واجهة القطعة (HTTP)");
-                        tile.setOnClickListener(z->openRouter(d.address));
+                        ResultCards.ubnt(this,tile,d,()->openRouter(d.address));
                     }),line->log(ubntLog,line));
                 }catch(Exception e){log(ubntLog,"فشل اكتشاف UBNT: "+e.getMessage());}
                 post(()->find.setEnabled(true));
@@ -353,24 +340,35 @@ public final class ToolsActivity extends Activity {
             dnsTarget.setPadding(dp(12),dp(10),dp(12),dp(10));
             dnsTarget.setTextDirection(View.TEXT_DIRECTION_LTR);
             dns.addView(dnsTarget,margins(-1,dp(48),0,8));
-            Button dnsButton=button("اختبار DNS",0xFF173245);
+            Button dnsButton=button("اختبار DNS",palette.accentSoft);
             dns.addView(dnsButton,new LinearLayout.LayoutParams(-1,dp(49)));
-            TextView dnsResult=text("نتيجة تحليل DNS تظهر هنا.",12,GREEN,false);
-            dnsResult.setTextIsSelectable(true);
-            dns.addView(dnsResult,margins(-1,-2,10,0));
+            TextView dnsStatus=text("جاهز لتحليل DNS",12,MUTED,false);
+            dns.addView(dnsStatus,margins(-1,-2,10,6));
+            LinearLayout dnsResults=col();
+            dns.addView(dnsResults);
             dnsButton.setOnClickListener(v->{
                 String domain=dnsTarget.getText().toString().trim();
                 if(!PingService.validTarget(domain)){dnsTarget.setError("عنوان غير صحيح");return;}
-                dnsButton.setEnabled(false);dnsResult.setText("جار تحليل DNS...");
+                dnsButton.setEnabled(false);dnsStatus.setText("جار تحليل DNS...");dnsResults.removeAllViews();
                 new Thread(()->{
                     long started=android.os.SystemClock.elapsedRealtime();
                     try{
                         InetAddress[] ips=InetAddress.getAllByName(domain);
-                        StringBuilder b=new StringBuilder("DNS • "+domain);
-                        for(InetAddress ip:ips)b.append("\n•  ").append(ip.getHostAddress());
-                        b.append("\nالمدة: ").append(android.os.SystemClock.elapsedRealtime()-started).append(" ms");
-                        post(()->dnsResult.setText(b.toString()));
-                    }catch(Exception e){post(()->dnsResult.setText("فشل تحليل DNS: "+e.getMessage()));}
+                        String[] addresses=new String[ips.length];
+                        for(int i=0;i<ips.length;i++)addresses[i]=ips[i].getHostAddress();
+                        long elapsed=android.os.SystemClock.elapsedRealtime()-started;
+                        post(()->{
+                            dnsStatus.setText("اكتمل تحليل DNS");
+                            ResultCards.dns(this,dnsResults,domain,addresses,elapsed);
+                        });
+                    }catch(Exception e){
+                        post(()->{
+                            dnsStatus.setText("تعذّر تحليل DNS");
+                            LinearLayout card=ResultCards.newCard(this,dnsResults);
+                            ResultCards.title(this,card,"تعذّر معرفة العنوان");
+                            ResultCards.note(this,card,e.getMessage(),RED);
+                        });
+                    }
                     post(()->dnsButton.setEnabled(true));
                 },"MT_TOOLS-DNS").start();
             });
@@ -382,7 +380,7 @@ public final class ToolsActivity extends Activity {
             portHost.setTextDirection(View.TEXT_DIRECTION_LTR);
             portHost.setPadding(dp(12),dp(10),dp(12),dp(10));
             ports.addView(portHost,margins(-1,dp(48),9,9));
-            Button check=button("فحص جميع منافذ TCP",0xFF173245);
+            Button check=button("فحص جميع منافذ TCP",palette.accentSoft);
             ports.addView(check,new LinearLayout.LayoutParams(-1,dp(53)));
             ProgressBar portsProgress=new ProgressBar(this,null,android.R.attr.progressBarStyleHorizontal);
             portsProgress.setMax(65535);
@@ -391,10 +389,8 @@ public final class ToolsActivity extends Activity {
             ports.addView(portsProgress,margins(-1,dp(7),10,8));
             TextView portSummary=text("",12,MUTED,false);
             ports.addView(portSummary);
-            TextView portResult=text("",12,GREEN,false);portResult.setTextIsSelectable(true);
-            portResult.setTextDirection(View.TEXT_DIRECTION_LTR);
-            portResult.setGravity(Gravity.LEFT);
-            ports.addView(portResult,margins(-1,-2,10,0));
+            LinearLayout portResults=col();
+            ports.addView(portResults,margins(-1,-2,10,0));
             check.setOnClickListener(v->{
                 Thread existing=portsThread;
                 if(existing!=null && existing.isAlive()){
@@ -408,12 +404,12 @@ public final class ToolsActivity extends Activity {
                 if(!PingService.validTarget(host)){portHost.setError("عنوان غير صحيح");return;}
                 final PortScanner.Stop stop=new PortScanner.Stop();
                 portStop=stop;
-                portResult.setText("");
+                portResults.removeAllViews();
                 portSummary.setText("جار تحضير فحص المنافذ...");
                 portsProgress.setProgress(0);
                 portsProgress.setVisibility(View.VISIBLE);
                 check.setText("■ إيقاف فحص المنافذ");
-                check.setBackground(surface(0xFF9D3A4E,BORDER,12));
+                check.setBackground(surface(palette.stop,BORDER,12));
                 Thread worker=new Thread(()->{
                     final Thread self=Thread.currentThread();
                     try{
@@ -430,7 +426,7 @@ public final class ToolsActivity extends Activity {
                             @Override public void found(int port,String service){
                                 post(()->{
                                     if(portStop==stop && !stop.isCancelled())
-                                        portResult.append(port+"  •  "+service+"  •  مفتوح\n");
+                                        ResultCards.port(ToolsActivity.this,portResults,port,service);
                                 });
                             }
                             @Override public void message(String line){
@@ -444,7 +440,7 @@ public final class ToolsActivity extends Activity {
                             if(portsThread==self)portsThread=null;
                             check.setEnabled(true);
                             check.setText("إعادة فحص المنافذ");
-                            check.setBackground(surface(0xFF173245,BORDER,12));
+                            check.setBackground(surface(palette.accentSoft,BORDER,12));
                             if(wasStopped)portSummary.append("\nتوقف الفحص قبل اكتماله.");
                             else portsProgress.setProgress(65535);
                         });
@@ -473,9 +469,9 @@ public final class ToolsActivity extends Activity {
         },"MT_TOOLS-Public-IP").start();
     }
     private void refreshWifi(){
-        if(wifiText==null)return;
+        if(wifiDisplay==null)return;
         WifiAnalyzer.Current now=WifiAnalyzer.current(this);
-        wifiText.setText(now.describe());
+        ResultCards.wifi(this,wifiDisplay,now);
     }
 
     private boolean isLocationServiceEnabled(){
@@ -489,12 +485,13 @@ public final class ToolsActivity extends Activity {
     }
 
     private void finishWifiScan(int generation,boolean fresh){
-        if(generation!=wifiScanGeneration || closed || wifiAdvice==null)return;
+        if(generation!=wifiScanGeneration || closed || wifiAdviceResults==null)return;
         releaseWifiReceiver();
         refreshWifi();
         WifiAnalyzer.Current now=WifiAnalyzer.current(this);
         WifiAnalyzer.Advice advice=WifiAnalyzer.recommend(this,now);
-        wifiAdvice.setText(advice.label);
+        wifiStatus.setText("");
+        ResultCards.wifiAdvice(this,wifiAdviceResults,advice.label);
     }
 
     private void releaseWifiReceiver(){
@@ -509,21 +506,21 @@ public final class ToolsActivity extends Activity {
     }
 
     private void analyzeWifi(){
-        if(wifiAdvice==null)return;
+        if(wifiStatus==null)return;
         refreshWifi();
         if(!isLocationServiceEnabled()){
-            wifiAdvice.setText("لتعداد الشبكات القريبة، يرجى تشغيل خدمات الموقع ثم إعادة الفحص.");
+            wifiStatus.setText("لتعداد الشبكات القريبة، يرجى تشغيل خدمات الموقع ثم إعادة الفحص.");
             return;
         }
         final WifiManager manager=(WifiManager)getApplicationContext()
                 .getSystemService(Context.WIFI_SERVICE);
         if(manager==null || !manager.isWifiEnabled()){
-            wifiAdvice.setText("شبكة Wi-Fi غير مفعّلة.");
+            wifiStatus.setText("شبكة Wi-Fi غير مفعّلة.");
             return;
         }
         releaseWifiReceiver();
         final int request=++wifiScanGeneration;
-        wifiAdvice.setText("جار فحص شبكات Wi-Fi القريبة...");
+        wifiStatus.setText("جار فحص شبكات Wi-Fi القريبة...");
         wifiReceiver=new BroadcastReceiver(){
             @Override public void onReceive(Context context,Intent intent){
                 if(!WifiManager.SCAN_RESULTS_AVAILABLE_ACTION.equals(intent.getAction()))return;
@@ -556,8 +553,8 @@ public final class ToolsActivity extends Activity {
         if(requestCode==WIFI_LOCATION_REQUEST){
             if(results.length>0 && results[0]==android.content.pm.PackageManager.PERMISSION_GRANTED){
                 analyzeWifi();
-            } else if(wifiAdvice!=null) {
-                wifiAdvice.setText("لعرض اسم Wi-Fi وفحص القنوات يلزم السماح بإذن الموقع وتشغيل خدمة الموقع.");
+            } else if(wifiStatus!=null) {
+                wifiStatus.setText("لعرض اسم Wi-Fi وفحص القنوات يلزم السماح بإذن الموقع وتشغيل خدمة الموقع.");
                 refreshWifi();
             }
         }

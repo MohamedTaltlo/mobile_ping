@@ -7,6 +7,16 @@ Native Android ICMP monitoring app, inspired by Termux ping output. Foreground b
 See the [build workflow](.github/workflows/android.yml). The APK is sideloaded outside Google Play.
 Without permanent signing secrets, the workflow produces a debug-signed APK that cannot update a differently-signed installation.
 
+## الإصدار 4.0.0
+
+- تصميم نتائج موحد بكروت مريحة للقراءة في صفحات UBNT وLAN وDNS والمنافذ وTraceroute.
+- التفاصيل الرئيسية بخط أوضح، وكل حقل له عنوانه وقيمته بشكل مستقل، وقيم MAC/IP/SSID بوضع LTR داخل الصفحة العربية.
+- عرض آخر 60 نبضة Ping بكروت منفصلة، وسجل الانقطاعات ومددها ضمن بطاقات.
+- صفحة Wi-Fi تبيّن المعلومات الحالية والتوصية في بطاقات منظمة.
+- اعتماد الوضع النهاري والليلي تلقائياً من إعداد Android النظامي (Configuration.UI_MODE_NIGHT_MASK).
+- ألوان مناسبة لكل وضع، مع شريط حالة وأيقونات ملائمة، وخلفيات القائمة الجانبية والرسم البياني متكيفة.
+- لا حاجة لأي ضبط من داخل التطبيق؛ عند تغيير المظهر من إعدادات الهاتف يُعاد إنشاء الواجهة بالقيم الجديدة تلقائياً.
+
 ## الإصدار 3.1.1
 
 - تعديل تنسيق العناوين الثلاثة الجاهزة للبينغ ومنح كل زر عرضاً مناسباً ومسافات واضحة.

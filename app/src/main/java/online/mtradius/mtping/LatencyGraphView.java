@@ -14,16 +14,15 @@ import java.util.Locale;
  * Chronology stays left -> right even when the rest of the interface is RTL.
  */
 final class LatencyGraphView extends View {
-    private static final int GREEN = 0xFF3EDAB6;
-    private static final int RED = 0xFFFF6278;
-    private static final int AMBER = 0xFFFFC36A;
-    private static final int GRID = 0xFF253A50;
-    private static final int LABEL = 0xFFB5C5D5;
+    private final int GREEN,RED,AMBER,GRID,LABEL;
     private final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
     private List<PingSample> data = Collections.emptyList();
 
     LatencyGraphView(Context context) {
         super(context);
+        ThemePalette theme=ThemePalette.of(context);
+        GREEN=theme.accent;RED=theme.danger;AMBER=theme.warning;
+        GRID=theme.grid;LABEL=theme.label;
         setMinimumHeight(dp(208));
         setLayerType(View.LAYER_TYPE_SOFTWARE, null);
     }
