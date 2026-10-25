@@ -8,6 +8,17 @@ import java.util.List;
 /** Single process in-memory live session. All state access is synchronized. */
 final class PingState {
     static final PingState INSTANCE = new PingState();
+    static final PingState SECOND = new PingState();
+    static final PingState THIRD = new PingState();
+    static PingState forSlot(int slot) {
+        if(slot==0)return INSTANCE;
+        if(slot==1)return SECOND;
+        if(slot==2)return THIRD;
+        throw new IllegalArgumentException("Invalid ping slot");
+    }
+    static PingState.Snapshot[] liveSnapshots() {
+        return new PingState.Snapshot[]{INSTANCE.snapshot(),SECOND.snapshot(),THIRD.snapshot()};
+    }
     private final ArrayDeque<PingSample> samples = new ArrayDeque<>();
     private final ArrayDeque<Outage> outages = new ArrayDeque<>();
     private String host = "10.0.0.1";

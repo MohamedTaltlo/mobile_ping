@@ -42,7 +42,9 @@ public final class MainActivity extends Activity {
     };
 
     private Sidebar sidebar;
-    private EditText hostInput;
+    private EditText hostInput,secondHostInput,thirdHostInput;
+    private final TextView[] targetStatusRows=new TextView[3];
+    private int selectedSlot=0;
     private Button startButton;
     private EditText intervalInput;
     private TextView statusText, heroText, heroDetail, outageText;
@@ -69,6 +71,8 @@ public final class MainActivity extends Activity {
         buildUI();
         String host = getSharedPreferences("settings", MODE_PRIVATE).getString("host", "10.0.0.1");
         hostInput.setText(host);
+        secondHostInput.setText(getSharedPreferences("settings",MODE_PRIVATE).getString("host1",""));
+        thirdHostInput.setText(getSharedPreferences("settings",MODE_PRIVATE).getString("host2",""));
         int interval = getSharedPreferences("settings", MODE_PRIVATE).getInt("interval", 1000);
         intervalInput.setText(Integer.toString(interval));
         if (Build.VERSION.SDK_INT >= 33 &&
@@ -269,6 +273,12 @@ public final class MainActivity extends Activity {
             });
         }
         target.addView(presets);
+        target.addView(txt("أهداف إضافية (اختياري • حتى 3)",11,MUTED,true),
+                margin(-1,-2,14,4));
+        secondHostInput=additionalHostField("العنوان الثاني • مثال: 8.8.8.8");
+        target.addView(secondHostInput,margin(-1,dp(47),5,0));
+        thirdHostInput=additionalHostField("العنوان الثالث • مثال: www.google.com");
+        target.addView(thirdHostInput,margin(-1,dp(47),8,0));
         root.addView(target);
 
         LinearLayout actions = horizontal();
@@ -285,12 +295,36 @@ public final class MainActivity extends Activity {
 
         root.addView(actions, margin(-1, -2, 12, 0));
 
+        LinearLayout summary=vertical();
+        summary.setPadding(dp(13),dp(12),dp(13),dp(10));
+        summary.setBackground(shape(CARD,BORDER,18));
+        summary.addView(txt("المراقبة المتزامنة • اضغط عنواناً للتفاصيل",12,MUTED,true));
+        for(int i=0;i<3;i++){
+            final int slot=i;
+            TextView row=txt("—",13,WHITE,true);
+            row.setSingleLine(true);
+            row.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            row.setGravity(Gravity.RIGHT|Gravity.CENTER_VERTICAL);
+            row.setPadding(dp(12),dp(9),dp(12),dp(9));
+            row.setMinimumHeight(dp(46));
+            row.setOnClickListener(v->selectTarget(slot));
+            targetStatusRows[i]=row;
+            summary.addView(row,margin(-1,-2,5,0));
+        }
+        root.addView(summary,margin(-1,-2,10,0));
+
         LinearLayout hero = vertical();
         hero.setPadding(dp(20), dp(18), dp(20), dp(17));
         hero.setBackground(shape(CARD, BORDER, 20));
         hero.addView(txt("زمن الاستجابة الحالي", 11, MUTED, true));
         heroText = txt("—", 46, GREEN, true);
-        heroText.setTypeface(Typeface.create("sans-serif-light", Typeface.BOLD));
+        heroText.setSingleLine(true);
+        heroText.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        heroText.setAutoSizeTextTypeUniformWithConfiguration(22,46,1,
+                android.util.TypedValue.COMPLEX_UNIT_SP);
+        heroText.setTextDirection(View.TEXT_DIRECTION_LTR);
+        heroText.setGravity(Gravity.RIGHT);
+        heroText.setTypeface(Typeface.create("sans-serif", Typeface.BOLD));
         hero.addView(heroText, margin(-1, -2, 4, 0));
         heroDetail = txt("ابدأ المراقبة لعرض نتيجة كل نبضة", 12, MUTED, false);
         hero.addView(heroDetail);
@@ -337,6 +371,35 @@ public final class MainActivity extends Activity {
         AppFooter.add(this,root);
     }
 
+    private EditText additionalHostField(String hint) {
+        EditText field=new EditText(this);
+        field.setSingleLine(true);
+        field.setTextSize(15);
+        field.setTextColor(WHITE);
+        field.setHintTextColor(MUTED);
+        field.setHint(hint);
+        field.setTypeface(Typeface.MONOSPACE);
+        field.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
+        field.setTextDirection(View.TEXT_DIRECTION_LTR);
+        field.setGravity(Gravity.LEFT|Gravity.CENTER_VERTICAL);
+        field.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_URI);
+        field.setImeOptions(EditorInfo.IME_ACTION_DONE|EditorInfo.IME_FLAG_NO_EXTRACT_UI);
+        field.setPadding(dp(13),dp(8),dp(13),dp(8));
+        field.setBackground(shape(palette.panel,BORDER,12));
+        return field;
+    }
+
+    private void selectTarget(int slot) {
+        if(slot<0 || slot>2)return;
+        if(!PingState.forSlot(slot).snapshot().running)return;
+        selectedSlot=slot;
+        lastRevision=Long.MIN_VALUE;
+        lastPacketSequence=-1;
+        packetsEmptyShown=false;
+        if(pingCards!=null)pingCards.removeAllViews();
+        paintLiveState();
+    }
+
     private TextView statCard(LinearLayout row, String label, String initial) {
         LinearLayout card = vertical();
         card.setPadding(dp(11), dp(12), dp(5), dp(12));
@@ -357,10 +420,13 @@ public final class MainActivity extends Activity {
             startService(stop);
             return;
         }
-        String target = hostInput.getText().toString().trim();
-        if (!PingService.validTarget(target)) {
-            hostInput.setError("أدخل عنوان IP أو اسم موقع صحيح");
-            hostInput.requestFocus();
+        String[] targets;
+        try {
+            targets=MonitorTargets.normalize(hostInput.getText().toString(),
+                    secondHostInput.getText().toString(),thirdHostInput.getText().toString());
+        } catch(IllegalArgumentException e) {
+            hostInput.setError(e.getMessage());
+            Toast.makeText(this,e.getMessage(),Toast.LENGTH_LONG).show();
             return;
         }
         int millis;
@@ -378,7 +444,7 @@ public final class MainActivity extends Activity {
         }
         Intent start = new Intent(this, PingService.class)
                 .setAction(PingService.ACTION_START)
-                .putExtra(PingService.EXTRA_HOST, target)
+                .putExtra(PingService.EXTRA_HOSTS, targets)
                 .putExtra(PingService.EXTRA_INTERVAL, millis);
         try {
             startForegroundService(start);
@@ -388,7 +454,35 @@ public final class MainActivity extends Activity {
     }
 
     private void paintLiveState() {
-        PingState.Snapshot s = PingState.INSTANCE.snapshot();
+        PingState.Snapshot[] snapshots=PingState.liveSnapshots();
+        boolean anyRunning=snapshots[0].running;
+        if(!anyRunning)selectedSlot=0;
+        if(selectedSlot>0 && !snapshots[selectedSlot].running)selectedSlot=0;
+        for(int i=0;i<3;i++){
+            TextView card=targetStatusRows[i];
+            PingState.Snapshot unit=snapshots[i];
+            if(!unit.running){
+                card.setVisibility(i==0?View.VISIBLE:View.GONE);
+                if(i==0)card.setText("المراقبة متوقفة");
+                continue;
+            }
+            card.setVisibility(View.VISIBLE);
+            PingSample recent=unit.last();
+            String label;
+            int color;
+            if(unit.isDown()){label="منقطع • "+duration(unit.downMs);color=RED;}
+            else if(unit.verifyingLoss){label="فقد نبضة";color=ORANGE;}
+            else if(recent==null){label="جار الفحص";color=MUTED;}
+            else if(recent.kind==PingSample.Kind.REPLY){
+                label=String.format(Locale.US,"%.2f ms",recent.rttMs);color=GREEN;
+            } else if(recent.kind==PingSample.Kind.ERROR){label="خطأ الفحص";color=ORANGE;}
+            else{label="فقد نبضة";color=ORANGE;}
+            card.setText("\u2066"+unit.host+"\u2069  •  "+label);
+            card.setTextColor(color);
+            card.setBackground(shape(i==selectedSlot?palette.accentSoft:palette.panel,
+                    i==selectedSlot?GREEN:BORDER,12));
+        }
+        PingState.Snapshot s=snapshots[selectedSlot];
         PingSample last = s.last();
         lastRunning = s.running;
         boolean down = s.running && s.isDown();
@@ -397,11 +491,13 @@ public final class MainActivity extends Activity {
         statusText.setText(s.running ? (down ? "●  منقطع" :
                 lostOne ? "●  فقد نبضة" : error ? "●  خطأ" : "●  متصل") : "●  متوقف");
         statusText.setTextColor(down ? RED : lostOne || error ? ORANGE : s.running ? GREEN : MUTED);
-        startButton.setText(s.running ? "■  إيقاف المراقبة" : "▶  بدء المراقبة");
-        startButton.setTextColor(s.running ? WHITE : palette.onAccent);
-        startButton.setBackground(shape(s.running ? palette.stop : GREEN, 0, 14));
-        hostInput.setEnabled(!s.running);
-        intervalInput.setEnabled(!s.running);
+        startButton.setText(anyRunning ? "■  إيقاف المراقبة" : "▶  بدء المراقبة");
+        startButton.setTextColor(anyRunning ? WHITE : palette.onAccent);
+        startButton.setBackground(shape(anyRunning ? palette.stop : GREEN, 0, 14));
+        hostInput.setEnabled(!anyRunning);
+        secondHostInput.setEnabled(!anyRunning);
+        thirdHostInput.setEnabled(!anyRunning);
+        intervalInput.setEnabled(!anyRunning);
         if (!s.running && last == null) {
             heroText.setText("—");
             heroDetail.setText("ابدأ المراقبة لعرض نتيجة كل نبضة");
@@ -423,7 +519,7 @@ public final class MainActivity extends Activity {
             heroDetail.setText(last.detail);
         } else if (last != null && last.kind == PingSample.Kind.REPLY) {
             heroText.setTextSize(46);
-            heroText.setText(String.format(Locale.US, "%.2f مللي ثانية", last.rttMs));
+            heroText.setText(String.format(Locale.US, "%.2f ms", last.rttMs));
             heroText.setTextColor(GREEN);
             heroDetail.setText("النبضة رقم " + last.sequence + "   TTL=" + last.ttl + "   •   " + s.host);
         } else {
@@ -444,7 +540,7 @@ public final class MainActivity extends Activity {
             lastRevision = s.revision;
             graph.setSamples(s.samples);
             showPackets(s.samples);
-            showOutages(s.outages, s.totalDownMs, s.errors);
+            showOutages(s.host,s.outages, s.totalDownMs, s.errors);
         }
     }
 
@@ -486,13 +582,14 @@ public final class MainActivity extends Activity {
             pingCards.removeViewAt(pingCards.getChildCount()-1);
     }
 
-    private void showOutages(List<PingState.Outage> items,long downTime,long errors) {
+    private void showOutages(String chosenHost,List<PingState.Outage> items,long downTime,long errors) {
         if(outageCards==null)return;
         outageCards.removeAllViews();
-        ResultCards.outageSummary(this,outageCards,outageStore.count(),duration(downTime),errors);
+        List<OutageStore.Entry> history=new java.util.ArrayList<>();
+        for(OutageStore.Entry e:outageStore.recent(200))
+            if(chosenHost.equals(e.host))history.add(e);
+        ResultCards.outageSummary(this,outageCards,history.size(),duration(downTime),errors);
         LinearLayout overview=(LinearLayout)outageCards.getChildAt(0);
-
-        List<OutageStore.Entry> history=outageStore.recent(50);
         if(history.isEmpty()){
             ResultCards.note(this,overview,"لم يتم تسجيل أي انقطاع حتى الآن.",MUTED);
             return;
@@ -507,8 +604,8 @@ public final class MainActivity extends Activity {
             else if("error".equals(e.outcome))state="خطأ أثناء الفحص";
             else state="انقطع الرصد قبل التأكد من العودة";
             long measured=e.durationMs;
-            if(e.active() && PingState.INSTANCE.snapshot().running)
-                measured=PingState.INSTANCE.snapshot().downMs;
+            if(e.active() && PingState.forSlot(selectedSlot).snapshot().running)
+                measured=PingState.forSlot(selectedSlot).snapshot().downMs;
             ResultCards.outage(this,outageCards,"الانقطاع رقم "+(i+1),
                     e.host,date.format(new Date(e.beganAt)),duration(measured),state);
         }
