@@ -2,7 +2,12 @@ package online.mtradius.mtping;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.Intent;
+import android.content.SharedPreferences;
+import android.net.Uri;
+import android.os.PowerManager;
+import android.provider.Settings;
 import android.content.pm.PackageManager;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
@@ -46,6 +51,7 @@ public final class MainActivity extends Activity {
 
     private Sidebar sidebar;
     private EditText hostInput,secondHostInput,thirdHostInput;
+    private int lastFocusedHostIndex=0;
     private final TextView[] targetStatusRows=new TextView[3];
     private int selectedSlot=0;
     private Button startButton;
@@ -246,15 +252,16 @@ public final class MainActivity extends Activity {
         target.addView(fields, margin(-1, -2, 8, 0));
         TextView intervalHelp = txt("الفاصل بين النبضات بالمللي ثانية (200 إلى 60000) • الافتراضي 1000", 10, MUTED, false);
         target.addView(intervalHelp, margin(-1, -2, 8, 0));
-        target.addView(txt("عناوين جاهزة", 10, MUTED, true), margin(-1, -2, 13, 7));
+        target.addView(txt("عناوين جاهزة • اضغط مطولاً للتعديل", 10, MUTED, true),
+                margin(-1, -2, 13, 7));
         // Independent, evenly spaced address chips. Use symmetric margins so
         // none of the rounded corners touch in either RTL or LTR layouts.
         LinearLayout presets = horizontal();
         presets.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
-        String[] defaultTargets = {"10.0.0.1", "8.8.8.8", "www.google.com"};
-        for (int i = 0; i < defaultTargets.length; i++) {
-            final String item = defaultTargets[i];
-            TextView option = txt(item, i == 2 ? 11 : 12, GREEN, true);
+        for (int i = 0; i < PingPresets.COUNT; i++) {
+            final int presetIndex = i;
+            TextView option = txt(readPreset(presetIndex),
+                    i == 2 ? 11 : 12, GREEN, true);
             option.setSingleLine(true);
             option.setEllipsize(android.text.TextUtils.TruncateAt.END);
             option.setTextDirection(View.TEXT_DIRECTION_LTR);
@@ -270,12 +277,23 @@ public final class MainActivity extends Activity {
             presets.addView(option, pp);
             option.setOnClickListener(v -> {
                 if (PingState.INSTANCE.snapshot().running) {
-                    Toast.makeText(this, "أوقف المراقبة لتغيير العنوان", Toast.LENGTH_SHORT).show();
-                } else {
-                    hostInput.setText(item);
-                    hostInput.setSelection(item.length());
+                    Toast.makeText(this,"أوقف المراقبة لتغيير عنوان الفحص",
+                            Toast.LENGTH_SHORT).show();
+                    return;
                 }
+                EditText field=focusedHostField();
+                String destination=readPreset(presetIndex);
+                field.setText(destination);
+                field.setSelection(destination.length());
+                // Continue using this target until another Ping input is focused.
+                field.requestFocus();
             });
+            option.setOnLongClickListener(v -> {
+                editPreset(presetIndex,option);
+                return true; // Consume the long click, don't fill a host input.
+            });
+            option.setContentDescription("عنوان جاهز: "+option.getText()+
+                    "؛ اضغط لاستخدامه في الحقل المختار، أو اضغط مطولاً لتعديله");
         }
         target.addView(presets);
         target.addView(txt("أهداف إضافية (اختياري • حتى 3)",11,MUTED,true),
@@ -284,7 +302,17 @@ public final class MainActivity extends Activity {
         target.addView(secondHostInput,margin(-1,dp(47),5,0));
         thirdHostInput=additionalHostField("العنوان الثالث • مثال: www.google.com");
         target.addView(thirdHostInput,margin(-1,dp(47),8,0));
+        hostInput.setOnFocusChangeListener((v,focused)->{
+            if(focused){lastFocusedHostIndex=0;highlightActiveHost();}
+        });
+        secondHostInput.setOnFocusChangeListener((v,focused)->{
+            if(focused){lastFocusedHostIndex=1;highlightActiveHost();}
+        });
+        thirdHostInput.setOnFocusChangeListener((v,focused)->{
+            if(focused){lastFocusedHostIndex=2;highlightActiveHost();}
+        });
         root.addView(target);
+        highlightActiveHost();
 
         LinearLayout actions = horizontal();
         startButton = new Button(this);
@@ -376,6 +404,82 @@ public final class MainActivity extends Activity {
         AppFooter.add(this,root);
     }
 
+    /** Make it obvious which of the three Ping fields receives the preset. */
+    private void highlightActiveHost() {
+        if(hostInput!=null)
+            hostInput.setBackground(shape(palette.panel,
+                    lastFocusedHostIndex==0?GREEN:BORDER,12));
+        if(secondHostInput!=null)
+            secondHostInput.setBackground(shape(palette.panel,
+                    lastFocusedHostIndex==1?GREEN:BORDER,12));
+        if(thirdHostInput!=null)
+            thirdHostInput.setBackground(shape(palette.panel,
+                    lastFocusedHostIndex==2?GREEN:BORDER,12));
+    }
+
+    private EditText focusedHostField() {
+        int index=PingPresets.fieldIndex(lastFocusedHostIndex);
+        if(index==1)return secondHostInput;
+        if(index==2)return thirdHostInput;
+        return hostInput;
+    }
+
+    private String readPreset(int presetIndex) {
+        String fallback=PingPresets.defaultAt(presetIndex);
+        String saved=getSharedPreferences(PingPresets.PREFERENCES,MODE_PRIVATE)
+                .getString(PingPresets.keyAt(presetIndex),fallback);
+        try {
+            return PingPresets.validate(saved);
+        }catch(IllegalArgumentException ignored){
+            return fallback;
+        }
+    }
+
+    private void editPreset(int presetIndex,TextView chip) {
+        EditText editor=additionalHostField("عنوان IP أو اسم موقع");
+        String current=readPreset(presetIndex);
+        editor.setText(current);
+        editor.setSelection(current.length());
+        LinearLayout wrapper=vertical();
+        wrapper.setPadding(dp(16),dp(10),dp(16),0);
+        wrapper.addView(editor,new LinearLayout.LayoutParams(-1,dp(52)));
+        AlertDialog dialog=new AlertDialog.Builder(this)
+                .setTitle("تعديل العنوان الجاهز "+(presetIndex+1))
+                .setMessage("اكتب عنوان السيرفر أو الموقع الذي تريد حفظه للاستخدام القادم.")
+                .setView(wrapper)
+                .setNegativeButton("إلغاء",null)
+                .setPositiveButton("حفظ",null)
+                .create();
+        dialog.setOnShowListener(unused->{
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
+                String updated;
+                try {
+                    updated=PingPresets.validate(editor.getText().toString());
+                }catch(IllegalArgumentException invalid){
+                    editor.setError(invalid.getMessage());
+                    return; // Keep the dialog open until the entry is valid.
+                }
+                boolean saved=getSharedPreferences(PingPresets.PREFERENCES,MODE_PRIVATE)
+                        .edit().putString(PingPresets.keyAt(presetIndex),updated)
+                        .commit();
+                if(!saved){
+                    editor.setError("تعذّر حفظ العنوان. حاول مجدداً.");
+                    return;
+                }
+                chip.setText(updated);
+                chip.setContentDescription("عنوان جاهز: "+updated+
+                        "؛ اضغط لاستخدامه في الحقل المختار، أو اضغط مطولاً لتعديله");
+                Toast.makeText(this,"تم حفظ العنوان الجاهز",Toast.LENGTH_SHORT).show();
+                dialog.dismiss();
+            });
+        });
+        dialog.show();
+        editor.requestFocus();
+        if(dialog.getWindow()!=null)
+            dialog.getWindow().setSoftInputMode(
+                    WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE);
+    }
+
     private EditText additionalHostField(String hint) {
         EditText field=new EditText(this);
         field.setSingleLine(true);
@@ -453,9 +557,47 @@ public final class MainActivity extends Activity {
                 .putExtra(PingService.EXTRA_INTERVAL, millis);
         try {
             startForegroundService(start);
+            maybeRequestBatteryExemption();
         } catch (Exception e) {
             Toast.makeText(this, "تعذّر بدء المراقبة: " + e.getMessage(), Toast.LENGTH_LONG).show();
         }
+    }
+
+    /**
+     * Android's battery-optimization exclusion is a special user-approved
+     * Settings flow, not a normal requestPermissions() runtime permission.
+     * Show it once, only after the user explicitly starts background Ping.
+     */
+    private void maybeRequestBatteryExemption() {
+        if(Build.VERSION.SDK_INT<23)return;
+        PowerManager manager=(PowerManager)getSystemService(Context.POWER_SERVICE);
+        if(manager==null || manager.isIgnoringBatteryOptimizations(getPackageName()))return;
+        SharedPreferences prefs=getSharedPreferences("background_monitoring",MODE_PRIVATE);
+        if(prefs.getBoolean("battery_prompt_shown",false))return;
+        prefs.edit().putBoolean("battery_prompt_shown",true).apply();
+        new AlertDialog.Builder(this)
+                .setTitle("استمرار مراقبة Ping بالخلفية")
+                .setMessage("حتى يواصل MT_TOOLS فحص الاتصال وتسجيل الفصل أثناء إغلاق "
+                        +"الواجهة، اسمح له بالعمل دون قيود تحسين البطارية.")
+                .setPositiveButton("السماح", (dialog,which)->{
+                    Intent direct=new Intent(
+                            Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
+                    direct.setData(Uri.parse("package:"+getPackageName()));
+                    try {
+                        startActivity(direct);
+                    }catch(Exception unavailable) {
+                        try {
+                            startActivity(new Intent(
+                                    Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS));
+                        }catch(Exception unsupported) {
+                            Toast.makeText(this,
+                                    "افتح إعدادات التطبيق ثم البطارية، واختر غير مقيّد",
+                                    Toast.LENGTH_LONG).show();
+                        }
+                    }
+                })
+                .setNegativeButton("لاحقاً",null)
+                .show();
     }
 
     private void paintLiveState() {
