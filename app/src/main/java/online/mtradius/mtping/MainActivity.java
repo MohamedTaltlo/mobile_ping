@@ -574,30 +574,24 @@ public final class MainActivity extends Activity {
         if(manager==null || manager.isIgnoringBatteryOptimizations(getPackageName()))return;
         SharedPreferences prefs=getSharedPreferences("background_monitoring",MODE_PRIVATE);
         if(prefs.getBoolean("battery_prompt_shown",false))return;
-        prefs.edit().putBoolean("battery_prompt_shown",true).apply();
-        new AlertDialog.Builder(this)
-                .setTitle("استمرار مراقبة Ping بالخلفية")
-                .setMessage("حتى يواصل MT_TOOLS فحص الاتصال وتسجيل الفصل أثناء إغلاق "
-                        +"الواجهة، اسمح له بالعمل دون قيود تحسين البطارية.")
-                .setPositiveButton("السماح", (dialog,which)->{
-                    Intent direct=new Intent(
-                            Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
-                    direct.setData(Uri.parse("package:"+getPackageName()));
-                    try {
-                        startActivity(direct);
-                    }catch(Exception unavailable) {
-                        try {
-                            startActivity(new Intent(
-                                    Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS));
-                        }catch(Exception unsupported) {
-                            Toast.makeText(this,
-                                    "افتح إعدادات التطبيق ثم البطارية، واختر غير مقيّد",
-                                    Toast.LENGTH_LONG).show();
-                        }
-                    }
-                })
-                .setNegativeButton("لاحقاً",null)
-                .show();
+
+        // Open Android's app-specific confirmation prompt directly. This is NOT
+        // the list of installed apps or the generic battery settings page.
+        // After Allow/Cancel, Android returns to MT_TOOLS automatically.
+        Intent prompt=new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
+        prompt.setData(Uri.parse("package:"+getPackageName()));
+        try {
+            startActivity(prompt);
+            prefs.edit().putBoolean("battery_prompt_shown",true).apply();
+        }catch(android.content.ActivityNotFoundException unavailable) {
+            // Some OEM ROMs do not support the system confirmation intent.
+            // Never redirect to a battery-app list that the user did not ask for.
+            Toast.makeText(this,"تعذّر عرض نافذة السماح على هذا الهاتف",
+                    Toast.LENGTH_LONG).show();
+        }catch(SecurityException denied) {
+            Toast.makeText(this,"لم يسمح النظام بعرض نافذة استثناء البطارية",
+                    Toast.LENGTH_LONG).show();
+        }
     }
 
     private void paintLiveState() {
