@@ -190,7 +190,7 @@ final class InternetQualityEngine {
         Phase phase=new Phase();
         final long timeStart=SystemClock.elapsedRealtime();
         final long deadline=timeStart+8200;
-        final long cap=upload?90L*1024*1024:240L*1024*1024;
+        final long cap=upload?256L*1024*1024:512L*1024*1024;
         final AtomicLong transferred=new AtomicLong(),activity=new AtomicLong();
         final AtomicInteger completed=new AtomicInteger();
         final AtomicBoolean phaseStop=new AtomicBoolean();
@@ -200,7 +200,7 @@ final class InternetQualityEngine {
             while(!phaseStop.get()&&!cancelled.get()&&
                     !Thread.currentThread().isInterrupted()&&
                     SystemClock.elapsedRealtime()<deadline&&activity.get()<cap){
-                if(upload)uploadBatch(2*1024*1024,activity,transferred,completed,phaseStop);
+                if(upload)uploadBatch(384*1024,activity,transferred,completed,phaseStop);
                 else downloadBatch(8*1024*1024,activity,transferred,completed,phaseStop);
             }
         }));
@@ -247,6 +247,7 @@ final class InternetQualityEngine {
             requests.add(c);c.setConnectTimeout(3100);c.setReadTimeout(3000);
             c.setUseCaches(false);c.setRequestProperty("Accept-Encoding","identity");
             if(c.getResponseCode()!=200)return;
+            completed.incrementAndGet();
             long done=0;
             try(InputStream in=c.getInputStream()){
                 byte[] buffer=new byte[32768];int n;
@@ -255,7 +256,7 @@ final class InternetQualityEngine {
                     activity.addAndGet(n);transferred.addAndGet(n);done+=n;
                 }
             }
-            if(done>0)completed.incrementAndGet();
+            
         }catch(IOException ignored){}finally{if(c!=null){requests.remove(c);c.disconnect();}}
     }
     private void uploadBatch(int bytes,AtomicLong activity,AtomicLong transferred,
