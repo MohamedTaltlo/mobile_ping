@@ -72,7 +72,7 @@ final class InternetQualityScore {
         }
         r.confidence=total.confidence();
         if(total.valid==0){
-            r.score=0;r.verdict="لم تكتمل القياسات";
+            r.score=0;r.verdict="تعذّر التقييم";
             r.diagnosis="تعذر الوصول إلى وجهات القياس. تحقق من الاتصال ثم أعد الفحص.";
             return;
         }
