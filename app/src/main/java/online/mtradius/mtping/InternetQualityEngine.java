@@ -15,239 +15,326 @@ import java.net.InetAddress;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
-import java.util.Locale;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/** User-initiated diagnostics. Never blocks the main thread. */
+/** On-device, user-initiated, active measurements. No privileged API or tracking. */
 final class InternetQualityEngine {
-    interface Progress { void update(String step, Report partial); }
+    interface Progress { void update(String phase, Report result); }
     static final class Report {
-        int score=-1;
-        String verdict="لم يبدأ الفحص";
-        String transport="—";
-        double googleMs=-1, cloudflareMs=-1, jitterMs=-1, lossPercent=-1;
-        double dnsGoogleMs=-1, dnsCloudflareMs=-1, httpsGoogleMs=-1, httpsCloudflareMs=-1;
-        double downloadMbps=-1, uploadMbps=-1, loadedMs=-1;
-        String gateway="—", diagnosis="ابدأ الفحص لعرض التشخيص.";
+        int score=-1, confidence=0, gaming=-1, calls=-1, browsing=-1;
+        String verdict="جاهز للفحص", transport="—", gateway="—", diagnosis="ابدأ الفحص لعرض التفاصيل.";
+        String bufferGrade="—";
+        double googleMs=-1, cloudflareMs=-1, googleLoss=-1, cloudflareLoss=-1;
+        double lossPercent=-1, jitterMs=-1, dnsGoogleMs=-1, dnsCloudflareMs=-1;
+        double httpsGoogleMs=-1, httpsCloudflareMs=-1, downloadMbps=-1, uploadMbps=-1;
+        double idleMs=-1, loadDownMs=-1, loadUpMs=-1, downDelta=-1, upDelta=-1;
+        double downP95=-1,upP95=-1;
         final List<String> notes=new ArrayList<>();
         Report copy() {
-            Report c=new Report();
-            c.score=score;c.verdict=verdict;c.transport=transport;
-            c.googleMs=googleMs;c.cloudflareMs=cloudflareMs;c.jitterMs=jitterMs;
-            c.lossPercent=lossPercent;c.dnsGoogleMs=dnsGoogleMs;
-            c.dnsCloudflareMs=dnsCloudflareMs;c.httpsGoogleMs=httpsGoogleMs;
-            c.httpsCloudflareMs=httpsCloudflareMs;c.downloadMbps=downloadMbps;
-            c.uploadMbps=uploadMbps;c.loadedMs=loadedMs;c.gateway=gateway;
-            c.diagnosis=diagnosis;c.notes.addAll(notes);
-            return c;
+            Report v=new Report();
+            v.score=score;v.confidence=confidence;v.gaming=gaming;v.calls=calls;v.browsing=browsing;
+            v.verdict=verdict;v.transport=transport;v.gateway=gateway;v.diagnosis=diagnosis;
+            v.bufferGrade=bufferGrade;v.googleMs=googleMs;v.cloudflareMs=cloudflareMs;
+            v.googleLoss=googleLoss;v.cloudflareLoss=cloudflareLoss;v.lossPercent=lossPercent;
+            v.jitterMs=jitterMs;v.dnsGoogleMs=dnsGoogleMs;v.dnsCloudflareMs=dnsCloudflareMs;
+            v.httpsGoogleMs=httpsGoogleMs;v.httpsCloudflareMs=httpsCloudflareMs;
+            v.downloadMbps=downloadMbps;v.uploadMbps=uploadMbps;v.idleMs=idleMs;
+            v.loadDownMs=loadDownMs;v.loadUpMs=loadUpMs;v.downDelta=downDelta;
+            v.upDelta=upDelta;v.downP95=downP95;v.upP95=upP95;
+            v.notes.addAll(notes);
+            return v;
         }
     }
-
+    private static final String BASE="https://speed.cloudflare.com";
     private static final Pattern RTT=Pattern.compile("time[=<]([0-9]+(?:\\.[0-9]+)?)",Pattern.CASE_INSENSITIVE);
-    private final AtomicBoolean cancelled=new AtomicBoolean();
-    void cancel(){cancelled.set(true);}
-    private void check() throws InterruptedException {
-        if(cancelled.get() || Thread.currentThread().isInterrupted())throw new InterruptedException();
-    }
-    private static double median(List<Double> values) {
-        if(values.isEmpty())return -1;
-        List<Double> list=new ArrayList<>(values);
-        Collections.sort(list);
-        int n=list.size();return n%2==1?list.get(n/2):(list.get(n/2-1)+list.get(n/2))/2;
-    }
+    private final AtomicBoolean cancelled=new AtomicBoolean(false);
+    private final ConcurrentLinkedQueue<HttpURLConnection> requests=new ConcurrentLinkedQueue<>();
     private static final class PingResult {
-        double median=-1,jitter=-1,loss=100;
-        int received;
+        double median=-1,loss=-1,jitter=-1;
+        int replies,requested;
     }
-    private PingResult ping(String host,int count) throws InterruptedException {
-        PingResult result=new PingResult();
-        List<Double> samples=new ArrayList<>();
-        // One system ICMP request per process: each sample is independently counted.
+    void cancel() {
+        cancelled.set(true);
+        for(HttpURLConnection c:requests) c.disconnect();
+    }
+    private void check() throws InterruptedException {
+        if(cancelled.get()||Thread.currentThread().isInterrupted())throw new InterruptedException();
+    }
+    static double percentile(List<Double> numbers,double fraction) {
+        if(numbers.isEmpty())return -1;
+        ArrayList<Double> n=new ArrayList<>(numbers);Collections.sort(n);
+        double ix=(n.size()-1)*fraction;
+        int lower=(int)ix,upper=Math.min(n.size()-1,lower+1);
+        return n.get(lower)+(n.get(upper)-n.get(lower))*(ix-lower);
+    }
+    private static double median(List<Double> numbers){return percentile(numbers,0.5);}
+    private static double best(double a,double b){return a<0?b:b<0?a:Math.min(a,b);}
+
+    /** ICMP is separate per target; an ICMP-blocking destination is not "100% loss". */
+    private PingResult ping(String target,int count) throws InterruptedException {
+        PingResult r=new PingResult();
+        ArrayList<Double> successful=new ArrayList<>();
+        int attempts=0;
         for(int i=0;i<count;i++){
-            check();
-            Process process=null;
+            check();Process p=null;
             try {
-                process=new ProcessBuilder("/system/bin/ping","-n","-c","1","-W","2",host)
+                p=new ProcessBuilder("/system/bin/ping","-n","-c","1","-W","1",target)
                         .redirectErrorStream(true).start();
-                long deadline=SystemClock.elapsedRealtime()+2600;
-                while(true){
+                attempts++;
+                long deadline=SystemClock.elapsedRealtime()+1700;
+                while(!p.waitFor(60,TimeUnit.MILLISECONDS)){
                     check();
-                    if(process.waitFor(80,java.util.concurrent.TimeUnit.MILLISECONDS))break;
-                    if(SystemClock.elapsedRealtime()>deadline){process.destroyForcibly();break;}
+                    if(SystemClock.elapsedRealtime()>=deadline){p.destroyForcibly();break;}
                 }
-                if(!process.isAlive()){
-                    StringBuilder text=new StringBuilder();
-                    try(InputStream in=process.getInputStream()){
-                        byte[] b=new byte[512];int n;
-                        while((n=in.read(b))!=-1 && text.length()<4096)
-                            text.append(new String(b,0,n,StandardCharsets.US_ASCII));
+                if(!p.isAlive()){
+                    StringBuilder output=new StringBuilder();
+                    try(InputStream in=p.getInputStream()){
+                        byte[] buf=new byte[512];int read;
+                        while((read=in.read(buf))>0&&output.length()<3000)
+                            output.append(new String(buf,0,read,StandardCharsets.US_ASCII));
                     }
-                    Matcher match=RTT.matcher(text);
-                    if(match.find()){
-                        samples.add(Double.parseDouble(match.group(1)));
-                        result.received++;
-                    }
+                    Matcher m=RTT.matcher(output);
+                    if(m.find())successful.add(Double.parseDouble(m.group(1)));
                 }
-            }catch(IOException ex){
-                // Some Android vendors disable ICMP: report unavailable, not invented RTT.
-                return new PingResult();
-            }finally{if(process!=null)process.destroy();}
+            } catch(IOException ignored){
+                // ROM may disable the native ping binary.
+                break;
+            } finally {if(p!=null)p.destroy();}
         }
-        result.loss=100.0*(count-result.received)/count;
-        result.median=median(samples);
-        if(samples.size()>1){
+        r.requested=attempts;r.replies=successful.size();r.median=median(successful);
+        // Requires several valid replies; otherwise mark ICMP quality uncertain.
+        if(attempts>=4&&r.replies>=3)r.loss=100.0*(attempts-r.replies)/attempts;
+        if(successful.size()>=3){
             double total=0;
-            for(int i=1;i<samples.size();i++)total+=Math.abs(samples.get(i)-samples.get(i-1));
-            result.jitter=total/(samples.size()-1);
+            for(int i=1;i<successful.size();i++)
+                total+=Math.abs(successful.get(i)-successful.get(i-1));
+            r.jitter=total/(successful.size()-1);
         }
-        return result;
+        return r;
     }
 
-    /** Actual UDP DNS query to a named resolver, not a cached Java hostname lookup. */
-    private double dns(String resolver,String host) throws InterruptedException {
-        check();
-        DatagramSocket socket=null;
+    /** UDP/53 resolver request. Failure is not proof the phone's system DNS is broken. */
+    private double dns(String resolver,String hostname) throws InterruptedException {
+        check();DatagramSocket socket=null;
         try{
-            byte[] query=new byte[512];int p=0;
-            int id=(int)(SystemClock.elapsedRealtime()&0xffff);
-            query[p++]=(byte)(id>>>8);query[p++]=(byte)id;
-            query[p++]=1;query[p++]=0;query[p++]=0;query[p++]=1;
-            p+=6;
-            for(String label:host.split("\\.")){
-                byte[] bytes=label.getBytes(StandardCharsets.US_ASCII);
-                if(bytes.length<1||bytes.length>63)return -1;
-                query[p++]=(byte)bytes.length;
-                System.arraycopy(bytes,0,query,p,bytes.length);p+=bytes.length;
+            byte[] query=new byte[512];int pos=0;
+            int id=(int)(SystemClock.elapsedRealtimeNanos()&65535);
+            query[pos++]=(byte)(id>>8);query[pos++]=(byte)id;
+            query[pos++]=1;query[pos++]=0;query[pos++]=0;query[pos++]=1;pos+=6;
+            for(String label:hostname.split("\\.")){
+                byte[] b=label.getBytes(StandardCharsets.US_ASCII);
+                if(b.length<1||b.length>63)return -1;
+                query[pos++]=(byte)b.length;System.arraycopy(b,0,query,pos,b.length);pos+=b.length;
             }
-            query[p++]=0;query[p++]=0;query[p++]=1;query[p++]=0;query[p++]=1;
-            socket=new DatagramSocket();socket.setSoTimeout(2500);
+            query[pos++]=0;query[pos++]=0;query[pos++]=1;query[pos++]=0;query[pos++]=1;
+            InetAddress address=InetAddress.getByName(resolver);
+            socket=new DatagramSocket();socket.setSoTimeout(2200);
             long start=SystemClock.elapsedRealtimeNanos();
-            socket.send(new DatagramPacket(query,p,InetAddress.getByName(resolver),53));
-            byte[] reply=new byte[512];
-            DatagramPacket packet=new DatagramPacket(reply,reply.length);
+            socket.send(new DatagramPacket(query,pos,address,53));
+            byte[] response=new byte[512];
+            DatagramPacket packet=new DatagramPacket(response,response.length);
             socket.receive(packet);
-            long elapsed=SystemClock.elapsedRealtimeNanos()-start;
-            if(packet.getLength()<12 || (reply[0]&255)!=(id>>>8) || (reply[1]&255)!=(id&255)
-                    || (reply[2]&0x80)==0 || (reply[3]&15)!=0 || (reply[7]&255)==0)return -1;
-            return elapsed/1e6;
-        }catch(IOException ex){return -1;}finally{if(socket!=null)socket.close();}
+            double elapsed=(SystemClock.elapsedRealtimeNanos()-start)/1e6;
+            if(packet.getLength()<12||!packet.getAddress().equals(address)||packet.getPort()!=53||
+                    (response[0]&255)!=(id>>8)||(response[1]&255)!=(id&255)||
+                    (response[2]&128)==0||(response[3]&15)!=0||
+                    ((response[6]&255)*256+(response[7]&255))<1)return -1;
+            return elapsed;
+        }catch(IOException ignored){return -1;}finally{if(socket!=null)socket.close();}
     }
 
-    private double https(String uri) throws InterruptedException {
-        check();
-        HttpURLConnection conn=null;
+    /** Network round trip to response headers. Same test host for idle and loaded RTT. */
+    private double http(String url,int timeout) throws InterruptedException {
+        check();HttpURLConnection c=null;
         try{
-            conn=(HttpURLConnection)new URL(uri).openConnection();
-            conn.setConnectTimeout(4000);conn.setReadTimeout(4000);
-            conn.setUseCaches(false);conn.setRequestProperty("Cache-Control","no-cache");
+            c=(HttpURLConnection)new URL(url).openConnection();
+            requests.add(c);
+            c.setConnectTimeout(timeout);c.setReadTimeout(timeout);
+            c.setUseCaches(false);c.setRequestProperty("Cache-Control","no-store");
+            c.setRequestProperty("Accept-Encoding","identity");
             long start=SystemClock.elapsedRealtimeNanos();
-            int status=conn.getResponseCode();
-            return status>=200&&status<400?(SystemClock.elapsedRealtimeNanos()-start)/1e6:-1;
-        }catch(IOException ex){return -1;}finally{if(conn!=null)conn.disconnect();}
+            int response=c.getResponseCode();
+            if(response<200||response>=400)return -1;
+            try(InputStream in=c.getInputStream()){
+                byte[] buf=new byte[256];while(in.read(buf)!=-1){check();}
+            }
+            return (SystemClock.elapsedRealtimeNanos()-start)/1e6;
+        }catch(IOException ignored){return -1;}
+        finally{if(c!=null){requests.remove(c);c.disconnect();}}
     }
+    private double cfProbe() throws InterruptedException {
+        return http(BASE+"/__down?bytes=0",2600);
+    }
+    private void report(Progress listener,String text,Report r) {listener.update(text,r.copy());}
 
-    private double download(int bytes,Report r,Progress progress) throws InterruptedException {
+    private static final class Phase {
+        double rate=-1,loaded=-1,p95=-1;
+        int samples;
+    }
+    /** 3 simultaneous TCP flows, with RTT probes WHILE the transfers are active. */
+    private Phase stressedPhase(boolean upload,Report report,Progress progress)
+            throws InterruptedException {
         check();
-        HttpURLConnection conn=null;
+        Phase phase=new Phase();
+        final long timeStart=SystemClock.elapsedRealtime();
+        final long deadline=timeStart+8200;
+        final long cap=upload?90L*1024*1024:240L*1024*1024;
+        final AtomicLong transferred=new AtomicLong(),activity=new AtomicLong();
+        final AtomicInteger completed=new AtomicInteger();
+        final AtomicBoolean phaseStop=new AtomicBoolean();
+        final ExecutorService pool=Executors.newFixedThreadPool(3);
+        final List<Future<?>> jobs=new ArrayList<>();
+        for(int lane=0;lane<3;lane++)jobs.add(pool.submit((Runnable)()->{
+            while(!phaseStop.get()&&!cancelled.get()&&
+                    !Thread.currentThread().isInterrupted()&&
+                    SystemClock.elapsedRealtime()<deadline&&activity.get()<cap){
+                if(upload)uploadBatch(2*1024*1024,activity,transferred,completed,phaseStop);
+                else downloadBatch(8*1024*1024,activity,transferred,completed,phaseStop);
+            }
+        }));
+        ArrayList<Double> latencySamples=new ArrayList<>();
         try{
-            conn=(HttpURLConnection)new URL("https://speed.cloudflare.com/__down?bytes="+bytes)
-                    .openConnection();
-            conn.setConnectTimeout(4500);conn.setReadTimeout(5500);
-            conn.setUseCaches(false);conn.setRequestProperty("Accept-Encoding","identity");
-            if(conn.getResponseCode()!=200)return -1;
-            long start=SystemClock.elapsedRealtimeNanos();
-            long n=0; byte[] buffer=new byte[32768];
-            try(InputStream input=conn.getInputStream()){
-                int size;
-                while((size=input.read(buffer))!=-1){
-                    check();
-                    n+=size;
-                    if(n>bytes+65536)break;
+            long warmup=SystemClock.elapsedRealtime()+850;
+            while(SystemClock.elapsedRealtime()<warmup){check();Thread.sleep(60);}
+            long probeDeadline=timeStart+7350;
+            while(SystemClock.elapsedRealtime()<probeDeadline){
+                check();
+                long before=activity.get();
+                double sample=cfProbe();
+                if(sample>=0 && activity.get()>before+2048)latencySamples.add(sample);
+                report(progress,upload?"ضغط الرفع وقياس الاستجابة":"ضغط التنزيل وقياس الاستجابة",report);
+                long nap=SystemClock.elapsedRealtime()+420;
+                while(SystemClock.elapsedRealtime()<nap&&SystemClock.elapsedRealtime()<probeDeadline){
+                    check();Thread.sleep(45);
                 }
             }
-            double elapsed=(SystemClock.elapsedRealtimeNanos()-start)/1e9;
-            return n>=bytes*0.9&&elapsed>0?n*8/elapsed/1e6:-1;
-        }catch(IOException ex){return -1;}finally{if(conn!=null)conn.disconnect();}
+        }finally{
+            phaseStop.set(true);
+            pool.shutdownNow();
+            // Abort active connections, otherwise a stalled read can continue to stress the line.
+            for(HttpURLConnection c:requests)c.disconnect();
+            pool.awaitTermination(3200,TimeUnit.MILLISECONDS);
+        }
+        long elapsed=Math.max(1,SystemClock.elapsedRealtime()-timeStart);
+        if(completed.get()>0&&transferred.get()>0)
+            phase.rate=transferred.get()*8.0/(elapsed*1000.0);
+        // A valid loaded sample requires visible concurrent payload traffic.
+        if(latencySamples.size()>=3){
+            phase.loaded=median(latencySamples);
+            phase.p95=percentile(latencySamples,0.95);
+            phase.samples=latencySamples.size();
+        }
+        return phase;
     }
 
-    private double upload(int bytes) throws InterruptedException {
-        check();
-        HttpURLConnection conn=null;
+    private void downloadBatch(int bytes,AtomicLong activity,AtomicLong transferred,
+                               AtomicInteger completed,AtomicBoolean stop) {
+        HttpURLConnection c=null;
         try{
-            conn=(HttpURLConnection)new URL("https://speed.cloudflare.com/__up").openConnection();
-            conn.setRequestMethod("POST");conn.setDoOutput(true);
-            conn.setConnectTimeout(4500);conn.setReadTimeout(6500);
-            conn.setRequestProperty("Content-Type","application/octet-stream");
-            conn.setFixedLengthStreamingMode(bytes);
-            byte[] buf=new byte[16384];new java.security.SecureRandom().nextBytes(buf);
-            long start=SystemClock.elapsedRealtimeNanos();
-            try(OutputStream out=conn.getOutputStream()){
-                int written=0;
-                while(written<bytes){
-                    check();int len=Math.min(buf.length,bytes-written);
-                    out.write(buf,0,len);written+=len;
+            c=(HttpURLConnection)new URL(BASE+"/__down?bytes="+bytes).openConnection();
+            requests.add(c);c.setConnectTimeout(3100);c.setReadTimeout(3000);
+            c.setUseCaches(false);c.setRequestProperty("Accept-Encoding","identity");
+            if(c.getResponseCode()!=200)return;
+            long done=0;
+            try(InputStream in=c.getInputStream()){
+                byte[] buffer=new byte[32768];int n;
+                while(!stop.get()&&!cancelled.get()&&
+                        !Thread.currentThread().isInterrupted()&&(n=in.read(buffer))!=-1){
+                    activity.addAndGet(n);transferred.addAndGet(n);done+=n;
                 }
-                out.flush();
             }
-            int response=conn.getResponseCode();
-            long elapsed=SystemClock.elapsedRealtimeNanos()-start;
-            return response>=200&&response<300&&elapsed>0
-                    ?bytes*8/(elapsed/1e9)/1e6:-1;
-        }catch(IOException ex){return -1;}finally{if(conn!=null)conn.disconnect();}
+            if(done>0)completed.incrementAndGet();
+        }catch(IOException ignored){}finally{if(c!=null){requests.remove(c);c.disconnect();}}
+    }
+    private void uploadBatch(int bytes,AtomicLong activity,AtomicLong transferred,
+                             AtomicInteger completed,AtomicBoolean stop) {
+        HttpURLConnection c=null;
+        try{
+            c=(HttpURLConnection)new URL(BASE+"/__up").openConnection();
+            requests.add(c);c.setRequestMethod("POST");c.setDoOutput(true);
+            c.setConnectTimeout(3100);c.setReadTimeout(3000);
+            c.setRequestProperty("Content-Type","application/octet-stream");
+            c.setFixedLengthStreamingMode(bytes);
+            byte[] buffer=new byte[16384];new java.security.SecureRandom().nextBytes(buffer);
+            int sent=0;
+            try(OutputStream out=c.getOutputStream()){
+                while(sent<bytes&&!stop.get()&&!cancelled.get()&&
+                        !Thread.currentThread().isInterrupted()){
+                    int n=Math.min(buffer.length,bytes-sent);
+                    out.write(buffer,0,n);sent+=n;activity.addAndGet(n);
+                }
+                if(sent==bytes)out.flush();
+            }
+            if(sent==bytes&&c.getResponseCode()>=200&&c.getResponseCode()<300){
+                transferred.addAndGet(sent);completed.incrementAndGet();
+            }
+        }catch(IOException ignored){}finally{if(c!=null){requests.remove(c);c.disconnect();}}
     }
 
-    private void publish(Progress p,String step,Report r){p.update(step,r.copy());}
-    Report run(Context context,boolean full,Progress progress) throws InterruptedException {
+    Report run(Context context,boolean full,Progress listener) throws InterruptedException {
         Report r=new Report();
-        ConnectivityManager manager=(ConnectivityManager)context.getSystemService(Context.CONNECTIVITY_SERVICE);
-        Network active=manager==null?null:manager.getActiveNetwork();
-        NetworkCapabilities cap=active==null?null:manager.getNetworkCapabilities(active);
-        r.transport=cap==null?"غير متصل":
-                cap.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)?"Wi-Fi":
-                cap.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)?"بيانات الهاتف":
-                cap.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)?"Ethernet":"شبكة أخرى";
-        NetworkTools.Connection connection=NetworkTools.connection(context);
-        r.gateway=connection.gateway.isEmpty()?"غير متاح":connection.gateway;
-        if(active==null){
-            r.score=0;r.verdict="لا يوجد اتصال بالشبكة";
-            r.diagnosis="الهاتف غير متصل بأي شبكة. تحقق من Wi-Fi أو بيانات الهاتف.";
-            publish(progress,"اكتمل الفحص",r);return r;
+        ConnectivityManager cm=(ConnectivityManager)context.getSystemService(Context.CONNECTIVITY_SERVICE);
+        Network network=cm==null?null:cm.getActiveNetwork();
+        NetworkCapabilities caps=network==null?null:cm.getNetworkCapabilities(network);
+        r.transport=caps==null?"غير متصل":
+                caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)?"Wi-Fi":
+                caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)?"بيانات الهاتف":
+                caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)?"Ethernet":"شبكة أخرى";
+        NetworkTools.Connection con=NetworkTools.connection(context);
+        r.gateway=con.gateway.isEmpty()?"غير متاح":con.gateway;
+        if(network==null){
+            r.score=0;r.verdict="لا توجد شبكة";r.diagnosis="لا يوجد اتصال نشط بالشبكة.";
+            report(listener,"اكتمل الفحص",r);return r;
         }
-        publish(progress,"قياس Ping إلى Google",r);
-        PingResult google=ping("8.8.8.8",5);
-        r.googleMs=google.median;r.lossPercent=google.loss;r.jitterMs=google.jitter;
-        check();publish(progress,"قياس Ping إلى Cloudflare",r);
-        PingResult cloud=ping("1.1.1.1",5);
-        r.cloudflareMs=cloud.median;
-        if(google.received==0&&cloud.received>0){
-            r.lossPercent=cloud.loss;r.jitterMs=cloud.jitter;
-        }else if(google.received>0&&cloud.received>0){
-            r.lossPercent=(google.loss+cloud.loss)/2;
-            if(google.jitter<0)r.jitterMs=cloud.jitter;
-            else if(cloud.jitter>=0)r.jitterMs=(google.jitter+cloud.jitter)/2;
-        }
-        check();publish(progress,"فحص DNS عبر Google وCloudflare",r);
+        report(listener,"اختبار Google Ping",r);
+        PingResult google=ping("8.8.8.8",8);
+        r.googleMs=google.median;r.googleLoss=google.loss;
+        check();report(listener,"اختبار Cloudflare Ping",r);
+        PingResult cloud=ping("1.1.1.1",8);
+        r.cloudflareMs=cloud.median;r.cloudflareLoss=cloud.loss;
+        // Pick the more responsive target rather than averaging rate-limited ICMP servers.
+        PingResult primary=google.replies>=cloud.replies?google:cloud;
+        r.lossPercent=primary.loss;
+        r.jitterMs=primary.jitter;
+        check();report(listener,"فحص DNS المباشر",r);
         r.dnsGoogleMs=dns("8.8.8.8","example.com");
         r.dnsCloudflareMs=dns("1.1.1.1","example.org");
-        check();publish(progress,"فحص اتصال HTTPS",r);
-        r.httpsGoogleMs=https("https://www.google.com/generate_204");
-        r.httpsCloudflareMs=https("https://www.cloudflare.com/cdn-cgi/trace");
+        check();report(listener,"فحص وصول HTTPS",r);
+        r.httpsGoogleMs=http("https://www.google.com/generate_204",3200);
+        r.httpsCloudflareMs=http("https://www.cloudflare.com/cdn-cgi/trace",3200);
         if(full){
-            check();publish(progress,"قياس سرعة التنزيل (يستهلك بيانات)",r);
-            r.downloadMbps=download(3*1024*1024,r,progress);
-            check();publish(progress,"قياس سرعة الرفع (يستهلك بيانات)",r);
-            r.uploadMbps=upload(1024*1024);
-            // Loaded latency is a best-effort HTTP probe after transfers,
-            // NOT a concurrent load measurement; do not label it bufferbloat.
+            check();report(listener,"قياس الاستجابة قبل الضغط",r);
+            ArrayList<Double> quiet=new ArrayList<>();
+            for(int i=0;i<7;i++){
+                check();
+                double p=cfProbe();if(p>=0)quiet.add(p);
+                if(i<6)Thread.sleep(135);
+            }
+            if(quiet.size()>=3)r.idleMs=median(quiet);
+            check();report(listener,"قياس Bufferbloat أثناء التنزيل",r);
+            Phase down=stressedPhase(false,r,listener);
+            r.downloadMbps=down.rate;r.loadDownMs=down.loaded;r.downP95=down.p95;
+            if(r.idleMs>=0&&r.loadDownMs>=0)r.downDelta=Math.max(0,r.loadDownMs-r.idleMs);
+            check();report(listener,"قياس Bufferbloat أثناء الرفع",r);
+            Phase up=stressedPhase(true,r,listener);
+            r.uploadMbps=up.rate;r.loadUpMs=up.loaded;r.upP95=up.p95;
+            if(r.idleMs>=0&&r.loadUpMs>=0)r.upDelta=Math.max(0,r.loadUpMs-r.idleMs);
         }
         check();
         InternetQualityScore.evaluate(r,full);
-        publish(progress,"اكتمل الفحص",r);
+        report(listener,"اكتمل الفحص",r);
         return r;
     }
 }
