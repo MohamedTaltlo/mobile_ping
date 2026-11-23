@@ -35,4 +35,29 @@ public final class InternetQualityScoreTest {
         assertTrue(r.score<40);
         assertFalse(r.notes.isEmpty());
     }
+    @Test public void bufferbloatGradesTrackExtraDelay() {
+        assertEquals("A+", InternetQualityScore.grade(2,5));
+        assertEquals("A", InternetQualityScore.grade(11,8));
+        assertEquals("B", InternetQualityScore.grade(18,30));
+        assertEquals("C", InternetQualityScore.grade(34,45));
+        assertEquals("D", InternetQualityScore.grade(80,50));
+        assertEquals("F", InternetQualityScore.grade(170,9));
+        assertEquals("—", InternetQualityScore.grade(-1,9));
+    }
+    @Test public void excessiveLoadedLatencyLowersScore() {
+        InternetQualityEngine.Report fast=new InternetQualityEngine.Report();
+        fast.googleMs=16;fast.lossPercent=0;fast.jitterMs=2;
+        fast.dnsGoogleMs=20;fast.httpsGoogleMs=80;
+        fast.downloadMbps=75;fast.uploadMbps=20;fast.downDelta=2;fast.upDelta=6;
+        InternetQualityScore.evaluate(fast,true);
+        InternetQualityEngine.Report busy=new InternetQualityEngine.Report();
+        busy.googleMs=16;busy.lossPercent=0;busy.jitterMs=2;
+        busy.dnsGoogleMs=20;busy.httpsGoogleMs=80;
+        busy.downloadMbps=75;busy.uploadMbps=20;busy.downDelta=140;busy.upDelta=210;
+        InternetQualityScore.evaluate(busy,true);
+        assertEquals("A",fast.bufferGrade);
+        assertEquals("F",busy.bufferGrade);
+        assertTrue(busy.score < fast.score - 15);
+        assertTrue(busy.diagnosis.contains("Bufferbloat"));
+    }
 }
