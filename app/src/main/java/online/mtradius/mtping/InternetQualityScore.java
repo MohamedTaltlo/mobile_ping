@@ -22,6 +22,31 @@ final class InternetQualityScore {
         if(worst<=120)return "D";
         return "F";
     }
+    /**
+     * Median latency describes usual behaviour, while sufficiently sampled P95
+     * catches intermittent TCP stalls. Isolated short runs must not falsely
+     * downgrade an otherwise healthy connection.
+     */
+    static String gradeWithTail(double down,double up,double downP95,double upP95,
+                                double idle,int downCount,int upCount){
+        String medianGrade=grade(down,up);
+        if("—".equals(medianGrade)||idle<0)return medianGrade;
+        boolean downSpike=downCount>=8&&downP95>=0&&downP95-idle>250;
+        boolean upSpike=upCount>=8&&upP95>=0&&upP95-idle>250;
+        // This is a conservative confidence adjustment, not a claim that one
+        // server TCP spike proves ISP queueing.
+        if(downSpike&&upSpike && rank(medianGrade)>rank("C"))return "C";
+        if((downSpike||upSpike)&&rank(medianGrade)>rank("B"))return "B";
+        return medianGrade;
+    }
+    private static int rank(String value){
+        if("A+".equals(value))return 6;
+        if("A".equals(value))return 5;
+        if("B".equals(value))return 4;
+        if("C".equals(value))return 3;
+        if("D".equals(value))return 2;
+        return "F".equals(value)?1:0;
+    }
     private static int gradeScore(String g){
         if("A+".equals(g))return 100;
         if("A".equals(g))return 92;
@@ -57,7 +82,8 @@ final class InternetQualityScore {
         // HTTPS response time includes TLS, server processing & geography; test availability only.
         int reachable=web<0?-1:100;
         int dl=speed(r.downloadMbps,true),ul=speed(r.uploadMbps,false);
-        r.bufferGrade=grade(r.downDelta,r.upDelta);
+        r.bufferGrade=gradeWithTail(r.downDelta,r.upDelta,r.downP95,r.upP95,
+                r.idleMs,r.downSamples,r.upSamples);
         int buffer=gradeScore(r.bufferGrade);
         // No direct packet-loss test: ICMP provider reply rate is NOT reliable packet loss.
         r.lossPercent=-1;
@@ -104,6 +130,10 @@ final class InternetQualityScore {
         if(r.dnsGoogleMs<0&&r.dnsCloudflareMs<0&&web>=0)
             r.notes.add("الإنترنت يعمل، لكن استعلامات UDP/53 المباشرة محجوبة أو لا تستجيب.");
         if(comprehensive){
+            boolean tailDown=r.idleMs>=0&&r.downSamples>=8&&r.downP95-r.idleMs>250;
+            boolean tailUp=r.idleMs>=0&&r.upSamples>=8&&r.upP95-r.idleMs>250;
+            if(tailDown||tailUp)
+                r.notes.add("توجد قفزات استجابة مرتفعة P95 أثناء الضغط رغم أن الوسيط منخفض. أعد الاختبار لتأكيد أنها من ازدحام الشبكة وليست من مسار خادم القياس.");
             if(buffer>=0){
                 if(Math.max(r.downDelta,r.upDelta)>120)
                     r.notes.add("ازدحام طوابير قوي تحت الضغط. افحص Bufferbloat وفعّل SQM/CAKE أو FQ-CoDel على الراوتر إذا لزم.");
