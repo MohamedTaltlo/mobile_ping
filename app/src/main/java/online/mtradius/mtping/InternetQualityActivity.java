@@ -27,6 +27,8 @@ public final class InternetQualityActivity extends Activity {
     private TextView[] indicators=new TextView[3];
     private TextView[] metrics;
     private TextView idle,loadedDown,loadedUp,addedDown,addedUp,downP95,upP95;
+    private TextView nearestRtt,nearestMin,nearestName,nearestJitter;
+    private TextView mlabDown,mlabUp,cloudDown,cloudUp,mlabName;
     private Button quick,full,stop;
     private final Handler ui=new Handler(Looper.getMainLooper());
     private volatile InternetQualityEngine engine;
@@ -166,6 +168,11 @@ public final class InternetQualityActivity extends Activity {
         stop.setOnClickListener(v->cancel());
         stop.setEnabled(false);
 
+        LinearLayout nearest=panel(root,"أقرب مسار إنترنت · TCP");
+        nearestRtt=rowMetric(nearest,"زمن الاستجابة");
+        nearestMin=rowMetric(nearest,"أقل زمن");
+        nearestJitter=rowMetric(nearest,"تذبذب المسار");
+        nearestName=rowMetric(nearest,"الخادم المختار");
         LinearLayout fit=panel(root,"مناسب لأي استخدام؟");
         LinearLayout fitLine=row();fitLine.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
         indicators[0]=mini(fitLine,"الألعاب");
@@ -178,6 +185,11 @@ public final class InternetQualityActivity extends Activity {
         down=largeNumber(speedTiles,"↓  التنزيل");
         up=largeNumber(speedTiles,"↑  الرفع");
         speeds.addView(speedTiles,margin(-1,-2,13));
+        mlabDown=rowMetric(speeds,"M-Lab · تنزيل");
+        mlabUp=rowMetric(speeds,"M-Lab · رفع");
+        cloudDown=rowMetric(speeds,"Cloudflare · تنزيل");
+        cloudUp=rowMetric(speeds,"Cloudflare · رفع");
+        mlabName=rowMetric(speeds,"خادم M-Lab");
 
         LinearLayout buffer=panel(root,"Bufferbloat · الاستجابة أثناء الضغط");
         LinearLayout bufferHead=row();
@@ -199,9 +211,9 @@ public final class InternetQualityActivity extends Activity {
         String[] titles={
                 "Google Ping · 8.8.8.8",
                 "Cloudflare Ping · 1.1.1.1",
-                "فقد ردود Google",
-                "فقد ردود Cloudflare",
-                "التذبذب Jitter",
+                "عدم استجابة ICMP Google",
+                "عدم استجابة ICMP Cloudflare",
+                "تذبذب أقرب مسار TCP",
                 "DNS Google",
                 "DNS Cloudflare",
                 "HTTPS Google",
@@ -228,7 +240,7 @@ public final class InternetQualityActivity extends Activity {
         gauge.setValue(r.score);
         verdict.setText(r.verdict);
         phase.setText(step);
-        confidence.setText(r.score<0?"":r.confidence+"% من أوزان الفحوص توفرت لها قياسات");
+        confidence.setText(r.score<0?"":"اكتمال القياسات: "+r.confidence+"%");
         indicators[0].setText(rating(r.gaming));
         indicators[1].setText(rating(r.calls));
         indicators[2].setText(rating(r.browsing));
@@ -238,11 +250,20 @@ public final class InternetQualityActivity extends Activity {
         }
         down.setText(speed(r.downloadMbps));
         up.setText(speed(r.uploadMbps));
+        mlabDown.setText(speed(r.mlabDownload));
+        mlabUp.setText(speed(r.mlabUpload));
+        cloudDown.setText(speed(r.cfDownload));
+        cloudUp.setText(speed(r.cfUpload));
+        mlabName.setText(r.mlabServer);
+        nearestRtt.setText(ms(r.nearMs));
+        nearestMin.setText(ms(r.nearMin));
+        nearestJitter.setText(ms(r.nearJitter));
+        nearestName.setText(r.nearHost);
         grade.setText(r.bufferGrade);
         grade.setTextColor("—".equals(r.bufferGrade)?theme.muted:
                 "A+".equals(r.bufferGrade)||"A".equals(r.bufferGrade)||"B".equals(r.bufferGrade)?
                         theme.accent:"C".equals(r.bufferGrade)?theme.warning:theme.danger);
-        bufferStatus.setText("—".equals(r.bufferGrade)?"يُقاس مع الفحص الشامل":
+        bufferStatus.setText("—".equals(r.bufferGrade)?"لم تكتمل عينات الضغط بالاتجاهين":
                 "A+".equals(r.bufferGrade)||"A".equals(r.bufferGrade)?"استجابة ممتازة تحت الحمل":
                 "B".equals(r.bufferGrade)?"استجابة جيدة تحت الحمل":
                 "C".equals(r.bufferGrade)?"تأخير متوسط تحت الحمل":"ازدحام ملحوظ تحت الحمل");
@@ -260,7 +281,7 @@ public final class InternetQualityActivity extends Activity {
         metrics[1].setText(ms(r.cloudflareMs));
         metrics[2].setText(loss(r.googleLoss));
         metrics[3].setText(loss(r.cloudflareLoss));
-        metrics[4].setText(ms(r.jitterMs));
+        metrics[4].setText(ms(r.nearJitter));
         metrics[5].setText(ms(r.dnsGoogleMs));
         metrics[6].setText(ms(r.dnsCloudflareMs));
         metrics[7].setText(ms(r.httpsGoogleMs));
