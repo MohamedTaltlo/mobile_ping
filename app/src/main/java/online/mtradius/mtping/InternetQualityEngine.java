@@ -214,16 +214,20 @@ final class InternetQualityEngine {
             }
         }));
         ArrayList<Double> latencySamples=new ArrayList<>();
+        long lastObservedActivity=0;
         try{
             long warmup=SystemClock.elapsedRealtime()+850;
             while(SystemClock.elapsedRealtime()<warmup){check();Thread.sleep(60);}
             long probeDeadline=timeStart+9500;
             while(SystemClock.elapsedRealtime()<probeDeadline){
                 check();
-                long before=activity.get();
                 double sample=selected==null?-1:regional.sample(selected.ip);
-                // Sustained load must be present, not just an HTTP request that has completed.
-                if(sample>=0 && activity.get()>before+1024)latencySamples.add(sample);
+                // Count traffic since the previous probe. This detects sustained
+                // upload traffic even if a sampled TCP connect spans a brief pause.
+                long amount=activity.get();
+                if(sample>=0 && amount>lastObservedActivity+8192 && amount>65536)
+                    latencySamples.add(sample);
+                lastObservedActivity=amount;
                 report(progress,upload?"ضغط الرفع وقياس الاستجابة":"ضغط التنزيل وقياس الاستجابة",report);
                 long nap=SystemClock.elapsedRealtime()+220;
                 while(SystemClock.elapsedRealtime()<nap&&SystemClock.elapsedRealtime()<probeDeadline){
