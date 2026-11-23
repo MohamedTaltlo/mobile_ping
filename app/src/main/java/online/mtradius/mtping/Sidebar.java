@@ -139,6 +139,7 @@ final class Sidebar {
         items.setOrientation(LinearLayout.VERTICAL);
         scroll.addView(items);
         add(items,"ping","◉   مراقبة Ping");
+        add(items,"quality","◉   تقييم أداء الإنترنت");
         add(items,"network","◈   معلومات الاتصال والراوتر");
         add(items,"scanner","▤   كشف أجهزة الشبكة");
         add(items,"trace","↝   تتبّع المسار Traceroute");
@@ -214,10 +215,13 @@ final class Sidebar {
             Intent target=new Intent(activity,MainActivity.class);
             target.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT|Intent.FLAG_ACTIVITY_SINGLE_TOP);
             activity.startActivity(target);
+        }else if("quality".equals(page)){
+            Intent target=new Intent(activity,InternetQualityActivity.class);
+            activity.startActivity(target);
         }else{
             Intent target=new Intent(activity,ToolsActivity.class).putExtra("page",page);
             activity.startActivity(target);
         }
-        if(activity instanceof ToolsActivity)activity.finish();
+        if(activity instanceof ToolsActivity || activity instanceof InternetQualityActivity)activity.finish();
     }
 }
