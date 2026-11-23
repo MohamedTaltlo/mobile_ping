@@ -41,6 +41,8 @@ final class InternetQualityEngine {
         double httpsGoogleMs=-1, httpsCloudflareMs=-1, downloadMbps=-1, uploadMbps=-1;
         double idleMs=-1, loadDownMs=-1, loadUpMs=-1, downDelta=-1, upDelta=-1;
         double downP95=-1,upP95=-1;
+        double nearMs=-1,nearMin=-1,nearJitter=-1,cfDownload=-1,cfUpload=-1,mlabDownload=-1,mlabUpload=-1;
+        String nearHost="—",mlabServer="—";
         final List<String> notes=new ArrayList<>();
         Report copy() {
             Report v=new Report();
@@ -53,6 +55,9 @@ final class InternetQualityEngine {
             v.downloadMbps=downloadMbps;v.uploadMbps=uploadMbps;v.idleMs=idleMs;
             v.loadDownMs=loadDownMs;v.loadUpMs=loadUpMs;v.downDelta=downDelta;
             v.upDelta=upDelta;v.downP95=downP95;v.upP95=upP95;
+            v.nearMs=nearMs;v.nearMin=nearMin;v.nearJitter=nearJitter;v.nearHost=nearHost;
+            v.cfDownload=cfDownload;v.cfUpload=cfUpload;
+            v.mlabDownload=mlabDownload;v.mlabUpload=mlabUpload;v.mlabServer=mlabServer;
             v.notes.addAll(notes);
             return v;
         }
@@ -60,6 +65,9 @@ final class InternetQualityEngine {
     private static final String BASE="https://speed.cloudflare.com";
     private static final Pattern RTT=Pattern.compile("time[=<]([0-9]+(?:\\.[0-9]+)?)",Pattern.CASE_INSENSITIVE);
     private final AtomicBoolean cancelled=new AtomicBoolean(false);
+    private final RegionalLatencyProbe regional=new RegionalLatencyProbe(cancelled);
+    private volatile MlabNdt7 mlab;
+    private volatile RegionalLatencyProbe.Endpoint selected;
     private final ConcurrentLinkedQueue<HttpURLConnection> requests=new ConcurrentLinkedQueue<>();
     private static final class PingResult {
         double median=-1,loss=-1,jitter=-1;
@@ -67,6 +75,7 @@ final class InternetQualityEngine {
     }
     void cancel() {
         cancelled.set(true);
+        if(mlab!=null)mlab.cancel();
         for(HttpURLConnection c:requests) c.disconnect();
     }
     private void check() throws InterruptedException {
@@ -189,18 +198,18 @@ final class InternetQualityEngine {
         check();
         Phase phase=new Phase();
         final long timeStart=SystemClock.elapsedRealtime();
-        final long deadline=timeStart+8200;
+        final long deadline=timeStart+10500;
         final long cap=upload?256L*1024*1024:512L*1024*1024;
         final AtomicLong transferred=new AtomicLong(),activity=new AtomicLong();
         final AtomicInteger completed=new AtomicInteger();
         final AtomicBoolean phaseStop=new AtomicBoolean();
-        final ExecutorService pool=Executors.newFixedThreadPool(3);
+        final ExecutorService pool=Executors.newFixedThreadPool(4);
         final List<Future<?>> jobs=new ArrayList<>();
-        for(int lane=0;lane<3;lane++)jobs.add(pool.submit((Runnable)()->{
+        for(int lane=0;lane<4;lane++)jobs.add(pool.submit((Runnable)()->{
             while(!phaseStop.get()&&!cancelled.get()&&
                     !Thread.currentThread().isInterrupted()&&
                     SystemClock.elapsedRealtime()<deadline&&activity.get()<cap){
-                if(upload)uploadBatch(384*1024,activity,transferred,completed,phaseStop);
+                if(upload)uploadBatch(1024*1024,activity,transferred,completed,phaseStop);
                 else downloadBatch(8*1024*1024,activity,transferred,completed,phaseStop);
             }
         }));
@@ -208,14 +217,15 @@ final class InternetQualityEngine {
         try{
             long warmup=SystemClock.elapsedRealtime()+850;
             while(SystemClock.elapsedRealtime()<warmup){check();Thread.sleep(60);}
-            long probeDeadline=timeStart+7350;
+            long probeDeadline=timeStart+9500;
             while(SystemClock.elapsedRealtime()<probeDeadline){
                 check();
                 long before=activity.get();
-                double sample=cfProbe();
-                if(sample>=0 && activity.get()>before+2048)latencySamples.add(sample);
+                double sample=selected==null?-1:regional.sample(selected.ip);
+                // Sustained load must be present, not just an HTTP request that has completed.
+                if(sample>=0 && activity.get()>before+1024)latencySamples.add(sample);
                 report(progress,upload?"ضغط الرفع وقياس الاستجابة":"ضغط التنزيل وقياس الاستجابة",report);
-                long nap=SystemClock.elapsedRealtime()+420;
+                long nap=SystemClock.elapsedRealtime()+220;
                 while(SystemClock.elapsedRealtime()<nap&&SystemClock.elapsedRealtime()<probeDeadline){
                     check();Thread.sleep(45);
                 }
@@ -231,7 +241,7 @@ final class InternetQualityEngine {
         if(completed.get()>0&&transferred.get()>0)
             phase.rate=transferred.get()*8.0/(elapsed*1000.0);
         // A valid loaded sample requires visible concurrent payload traffic.
-        if(latencySamples.size()>=3){
+        if(latencySamples.size()>=5){
             phase.loaded=median(latencySamples);
             phase.p95=percentile(latencySamples,0.95);
             phase.samples=latencySamples.size();
@@ -299,39 +309,61 @@ final class InternetQualityEngine {
             r.score=0;r.verdict="لا توجد شبكة";r.diagnosis="لا يوجد اتصال نشط بالشبكة.";
             report(listener,"اكتمل الفحص",r);return r;
         }
-        report(listener,"اختبار Google Ping",r);
-        PingResult google=ping("8.8.8.8",8);
+        report(listener,"اختيار أسرع مسار من عدة وجهات",r);
+        selected=regional.findNearest();
+        if(selected!=null){
+            r.nearMs=selected.medianMs;
+            r.nearMin=selected.minimumMs;
+            r.nearJitter=selected.jitterMs;
+            r.nearHost=selected.host;
+        }
+        check();report(listener,"فحص Google وCloudflare الإضافي",r);
+        PingResult google=ping("8.8.8.8",6);
         r.googleMs=google.median;r.googleLoss=google.loss;
-        check();report(listener,"اختبار Cloudflare Ping",r);
-        PingResult cloud=ping("1.1.1.1",8);
+        check();
+        PingResult cloud=ping("1.1.1.1",6);
         r.cloudflareMs=cloud.median;r.cloudflareLoss=cloud.loss;
-        // Pick the more responsive target rather than averaging rate-limited ICMP servers.
-        PingResult primary=google.replies>=cloud.replies?google:cloud;
-        r.lossPercent=primary.loss;
-        r.jitterMs=primary.jitter;
-        check();report(listener,"فحص DNS المباشر",r);
+        // Neither resolver ICMP loss nor blocked Echo replies represent data-packet loss.
+        r.lossPercent=-1;
+        r.jitterMs=r.nearJitter;
+        check();report(listener,"التحقق من DNS",r);
         r.dnsGoogleMs=dns("8.8.8.8","example.com");
         r.dnsCloudflareMs=dns("1.1.1.1","example.org");
-        check();report(listener,"فحص وصول HTTPS",r);
+        check();report(listener,"التحقق من المواقع",r);
         r.httpsGoogleMs=http("https://www.google.com/generate_204",3200);
         r.httpsCloudflareMs=http("https://www.cloudflare.com/cdn-cgi/trace",3200);
         if(full){
-            check();report(listener,"قياس الاستجابة قبل الضغط",r);
+            check();report(listener,"قياس TCP قبل الضغط",r);
             ArrayList<Double> quiet=new ArrayList<>();
-            for(int i=0;i<7;i++){
-                check();
-                double p=cfProbe();if(p>=0)quiet.add(p);
-                if(i<6)Thread.sleep(135);
+            if(selected!=null){
+                for(int i=0;i<9;i++){
+                    check();
+                    double p=regional.sample(selected.ip);
+                    if(p>=0)quiet.add(p);
+                    if(i<8)Thread.sleep(95);
+                }
             }
-            if(quiet.size()>=3)r.idleMs=median(quiet);
-            check();report(listener,"قياس Bufferbloat أثناء التنزيل",r);
+            if(quiet.size()>=5)r.idleMs=median(quiet);
+            check();report(listener,"تنزيل متعدد الاتصالات واختبار الاستجابة",r);
             Phase down=stressedPhase(false,r,listener);
-            r.downloadMbps=down.rate;r.loadDownMs=down.loaded;r.downP95=down.p95;
-            if(r.idleMs>=0&&r.loadDownMs>=0)r.downDelta=Math.max(0,r.loadDownMs-r.idleMs);
-            check();report(listener,"قياس Bufferbloat أثناء الرفع",r);
+            r.cfDownload=down.rate;r.loadDownMs=down.loaded;r.downP95=down.p95;
+            if(r.idleMs>=0&&r.loadDownMs>=0)
+                r.downDelta=RegionalLatencyProbe.extraLatency(r.idleMs,r.loadDownMs);
+            check();report(listener,"رفع متعدد الاتصالات واختبار الاستجابة",r);
             Phase up=stressedPhase(true,r,listener);
-            r.uploadMbps=up.rate;r.loadUpMs=up.loaded;r.upP95=up.p95;
-            if(r.idleMs>=0&&r.loadUpMs>=0)r.upDelta=Math.max(0,r.loadUpMs-r.idleMs);
+            r.cfUpload=up.rate;r.loadUpMs=up.loaded;r.upP95=up.p95;
+            if(r.idleMs>=0&&r.loadUpMs>=0)
+                r.upDelta=RegionalLatencyProbe.extraLatency(r.idleMs,r.loadUpMs);
+            check();report(listener,"اختبار مستقل عبر M-Lab",r);
+            mlab=new MlabNdt7(cancelled);
+            try{
+                MlabNdt7.Result independent=mlab.run();
+                r.mlabDownload=independent.download;
+                r.mlabUpload=independent.upload;
+                r.mlabServer=independent.server;
+            }finally{mlab=null;}
+            r.downloadMbps=Math.max(r.cfDownload,r.mlabDownload);
+            r.uploadMbps=Math.max(r.cfUpload,r.mlabUpload);
         }
         check();
         InternetQualityScore.evaluate(r,full);
