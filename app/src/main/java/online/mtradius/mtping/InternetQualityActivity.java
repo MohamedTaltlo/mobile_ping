@@ -29,7 +29,9 @@ public final class InternetQualityActivity extends Activity {
     private TextView idle,loadedDown,loadedUp,addedDown,addedUp,downP95,upP95;
     private TextView nearestRtt,nearestMin,nearestName,nearestJitter;
     private TextView mlabDown,mlabUp,cloudDown,cloudUp,mlabName;
-    private Button quick,full,stop;
+    private Button quick,full;
+    private boolean measuring;
+    private boolean comprehensiveActive;
     private final Handler ui=new Handler(Looper.getMainLooper());
     private volatile InternetQualityEngine engine;
     private volatile Thread worker;
@@ -154,19 +156,17 @@ public final class InternetQualityActivity extends Activity {
         summary.addView(confidence,margin(-1,-2,5));
 
         LinearLayout actions=row();
+        actions.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
         full=button("▶  فحص شامل",theme.accent,theme.onAccent);
         quick=button("فحص سريع",theme.accentSoft,theme.accent);
-        stop=button("إيقاف",theme.card,theme.danger);
-        LinearLayout.LayoutParams b1=new LinearLayout.LayoutParams(0,dp(49),1.15f);
+        LinearLayout.LayoutParams b1=new LinearLayout.LayoutParams(0,dp(49),1);
         b1.leftMargin=dp(5);actions.addView(full,b1);
         LinearLayout.LayoutParams b2=new LinearLayout.LayoutParams(0,dp(49),1);
         b2.leftMargin=dp(5);actions.addView(quick,b2);
-        actions.addView(stop,new LinearLayout.LayoutParams(0,dp(49),.68f));
         root.addView(actions,margin(-1,-2,8));
-        full.setOnClickListener(v->start(true));
-        quick.setOnClickListener(v->start(false));
-        stop.setOnClickListener(v->cancel());
-        stop.setEnabled(false);
+        full.setOnClickListener(v->{if(measuring)cancel();else start(true);});
+        quick.setOnClickListener(v->{if(measuring)cancel();else start(false);});
+        updateButtons(false,false);
 
         LinearLayout nearest=panel(root,"أقرب مسار إنترنت · TCP");
         nearestRtt=rowMetric(nearest,"زمن الاستجابة");
@@ -291,12 +291,26 @@ public final class InternetQualityActivity extends Activity {
         diagnosis.setText(r.diagnosis);
     }
 
+    /** Only the button for the active mode remains, and it becomes Stop. */
+    private void updateButtons(boolean running,boolean comprehensive){
+        measuring=running;
+        comprehensiveActive=comprehensive;
+        if(full==null||quick==null)return;
+        full.setVisibility(running&&!comprehensive?View.GONE:View.VISIBLE);
+        quick.setVisibility(running&&comprehensive?View.GONE:View.VISIBLE);
+        full.setText(running?"■  إيقاف القياس":"▶  فحص شامل");
+        quick.setText(running?"■  إيقاف القياس":"فحص سريع");
+        full.setBackground(shape(running?theme.danger:theme.accent,theme.border,12));
+        full.setTextColor(theme.onAccent);
+        quick.setBackground(shape(running?theme.danger:theme.accentSoft,theme.border,12));
+        quick.setTextColor(running?theme.onAccent:theme.accent);
+    }
     private void start(boolean comprehensive){
-        cancel();
+        if(measuring)return;
         final int ticket=++runId;
         final InternetQualityEngine job=new InternetQualityEngine();
         engine=job;
-        quick.setEnabled(false);full.setEnabled(false);stop.setEnabled(true);
+        updateButtons(true,comprehensive);
         show(new InternetQualityEngine.Report(),"جارٍ تجهيز الفحص...");
         worker=new Thread(()->{
             try{
@@ -323,15 +337,16 @@ public final class InternetQualityActivity extends Activity {
         worker.start();
     }
     private void finishRun(){
-        quick.setEnabled(true);full.setEnabled(true);stop.setEnabled(false);
         engine=null;worker=null;
+        updateButtons(false,false);
     }
     private void cancel(){
-        runId++;
+        if(!measuring&&worker==null)return;
+        runId++; // Discard queued results from an interrupted previous test.
         if(engine!=null)engine.cancel();
         if(worker!=null)worker.interrupt();
         engine=null;worker=null;
-        if(quick!=null){quick.setEnabled(true);full.setEnabled(true);stop.setEnabled(false);}
+        updateButtons(false,false);
         if(phase!=null)phase.setText("تم إيقاف الفحص");
     }
     @Override protected void onResume(){
