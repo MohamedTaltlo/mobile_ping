@@ -49,6 +49,7 @@ final class InternetQualityScore {
     static void evaluate(InternetQualityEngine.Report r,boolean full){
         r.notes.clear();
         double latency=best(r.googleMs,r.cloudflareMs);
+        if(latency<0)r.lossPercent=-1;
         double dns=best(r.dnsGoogleMs,r.dnsCloudflareMs);
         double https=best(r.httpsGoogleMs,r.httpsCloudflareMs);
         int ping=band(latency,35,80,160);
