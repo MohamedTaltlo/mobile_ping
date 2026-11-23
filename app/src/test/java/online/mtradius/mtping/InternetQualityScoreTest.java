@@ -60,4 +60,21 @@ public final class InternetQualityScoreTest {
         assertTrue(busy.score < fast.score - 15);
         assertTrue(busy.diagnosis.contains("Bufferbloat"));
     }
+    @Test public void highP95InBothDirectionsIsNotAutomaticallyExcellent() {
+        InternetQualityEngine.Report r=new InternetQualityEngine.Report();
+        r.nearMs=30;r.nearJitter=2;r.dnsGoogleMs=22;r.httpsGoogleMs=105;
+        r.downloadMbps=50;r.uploadMbps=8;
+        r.idleMs=44;r.downDelta=0;r.upDelta=2;
+        r.downP95=1074;r.upP95=1046;r.downSamples=12;r.upSamples=11;
+        InternetQualityScore.evaluate(r,true);
+        assertEquals("C",r.bufferGrade);
+        assertTrue(r.diagnosis.contains("P95"));
+        assertTrue(r.score<90);
+    }
+    @Test public void oneHandshakeSpikeWithTooFewSamplesDoesNotChangeGrade() {
+        assertEquals("A+",InternetQualityScore.gradeWithTail(0,2,1100,1080,45,5,6));
+        assertEquals("B",InternetQualityScore.gradeWithTail(0,2,1100,48,45,14,14));
+        assertEquals("A+",InternetQualityScore.gradeWithTail(0,2,50,52,45,14,14));
+    }
+
 }
