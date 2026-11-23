@@ -1,7 +1,6 @@
 package online.mtradius.mtping;
 
 import android.app.Activity;
-import android.content.Intent;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
@@ -17,29 +16,32 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 import java.util.Locale;
 
-/** Dedicated RTL internet-quality page using the shared MT_TOOLS palette/drawer. */
+/** Independent RTL quality dashboard with the same palette and shared drawer. */
 public final class InternetQualityActivity extends Activity {
     private ThemePalette theme;
     private String appearance;
     private boolean dark;
     private Sidebar sidebar;
-    private TextView score,verdict,progress,diagnosis;
+    private InternetQualityGauge gauge;
+    private TextView verdict,phase,confidence,grade,bufferStatus,down,up,diagnosis;
+    private TextView[] indicators=new TextView[3];
     private TextView[] metrics;
+    private TextView idle,loadedDown,loadedUp,addedDown,addedUp,downP95,upP95;
     private Button quick,full,stop;
     private final Handler ui=new Handler(Looper.getMainLooper());
     private volatile InternetQualityEngine engine;
     private volatile Thread worker;
     private int runId;
     private boolean destroyed;
-    private int dp(float x){return Math.round(x*getResources().getDisplayMetrics().density);}
-    private GradientDrawable surface(int fill,int stroke,int r){
-        GradientDrawable d=new GradientDrawable();d.setColor(fill);d.setCornerRadius(dp(r));
+    private int dp(float n){return Math.round(n*getResources().getDisplayMetrics().density);}
+    private GradientDrawable shape(int fill,int stroke,int rad){
+        GradientDrawable d=new GradientDrawable();d.setColor(fill);d.setCornerRadius(dp(rad));
         if(stroke!=0)d.setStroke(dp(1),stroke);return d;
     }
     private LinearLayout col(){LinearLayout l=new LinearLayout(this);l.setOrientation(1);return l;}
     private LinearLayout row(){LinearLayout l=new LinearLayout(this);l.setOrientation(0);l.setGravity(Gravity.CENTER_VERTICAL);return l;}
-    private TextView text(String s,int size,int color,boolean bold){
-        TextView v=new TextView(this);v.setText(s);v.setTextSize(size);v.setTextColor(color);
+    private TextView text(String content,int size,int color,boolean bold){
+        TextView v=new TextView(this);v.setText(content);v.setTextSize(size);v.setTextColor(color);
         if(bold)v.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
         v.setGravity(Gravity.RIGHT|Gravity.CENTER_VERTICAL);
         v.setTextDirection(View.TEXT_DIRECTION_RTL);return v;
@@ -48,145 +50,255 @@ public final class InternetQualityActivity extends Activity {
         LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(w,h);p.topMargin=dp(top);return p;
     }
     private LinearLayout panel(LinearLayout parent,String title){
-        LinearLayout box=col();box.setPadding(dp(15),dp(14),dp(15),dp(14));
-        box.setBackground(surface(theme.card,theme.border,17));
-        if(title!=null)box.addView(text(title,16,theme.primary,true),margin(-1,-2,0));
-        parent.addView(box,margin(-1,-2,12));return box;
+        LinearLayout l=col();l.setPadding(dp(15),dp(15),dp(15),dp(16));
+        l.setBackground(shape(theme.card,theme.border,18));
+        if(title!=null)l.addView(text(title,16,theme.primary,true));
+        parent.addView(l,margin(-1,-2,12));return l;
     }
-    private Button button(String title,int fill,int fg){
-        Button b=new Button(this);b.setAllCaps(false);b.setText(title);b.setTextSize(13);
-        b.setTextColor(fg);b.setBackground(surface(fill,theme.border,12));
-        return b;
+    private Button button(String label,int fill,int color){
+        Button b=new Button(this);b.setAllCaps(false);b.setText(label);b.setTextSize(13);
+        b.setTextColor(color);b.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
+        b.setBackground(shape(fill,theme.border,12));return b;
     }
-    @Override public void onCreate(Bundle b){
-        ThemePalette.prepareActivity(this);super.onCreate(b);
-        theme=ThemePalette.of(this);appearance=ThemePalette.getMode(this);dark=theme.dark;
+    private int qualityColor(int score){
+        return score<0?theme.muted:score>=75?theme.accent:score>=55?theme.warning:theme.danger;
+    }
+    private TextView rowMetric(LinearLayout group,String label){
+        LinearLayout line=row();line.setPadding(0,dp(10),0,dp(10));
+        TextView name=text(label,12,theme.muted,false);
+        line.addView(name,new LinearLayout.LayoutParams(0,-2,1));
+        TextView value=text("—",13,theme.primary,true);
+        value.setGravity(Gravity.LEFT|Gravity.CENTER_VERTICAL);
+        value.setTextDirection(View.TEXT_DIRECTION_LTR);
+        line.addView(value);group.addView(line);
+        View rule=new View(this);rule.setBackgroundColor(theme.border);
+        group.addView(rule,new LinearLayout.LayoutParams(-1,dp(1)));
+        return value;
+    }
+    private TextView mini(LinearLayout container,String name){
+        LinearLayout pane=col();
+        pane.setPadding(dp(7),dp(11),dp(7),dp(11));
+        pane.setGravity(Gravity.CENTER);
+        pane.setBackground(shape(theme.panel,theme.border,13));
+        TextView t=text("—",23,theme.primary,true);t.setGravity(Gravity.CENTER);
+        TextView label=text(name,11,theme.muted,false);label.setGravity(Gravity.CENTER);
+        pane.addView(t);pane.addView(label,margin(-1,-2,4));
+        LinearLayout.LayoutParams w=new LinearLayout.LayoutParams(0,-2,1);
+        w.leftMargin=dp(5);container.addView(pane,w);
+        return t;
+    }
+    private TextView largeNumber(LinearLayout parent,String title){
+        LinearLayout tile=col();tile.setPadding(dp(11),dp(13),dp(11),dp(13));
+        tile.setBackground(shape(theme.panel,theme.border,14));
+        tile.addView(text(title,12,theme.muted,true));
+        TextView number=text("—",22,theme.accent,true);
+        number.setTextDirection(View.TEXT_DIRECTION_LTR);
+        tile.addView(number,margin(-1,-2,6));
+        LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(0,-2,1);
+        p.leftMargin=dp(6);parent.addView(tile,p);return number;
+    }
+
+    @Override public void onCreate(Bundle saved){
+        ThemePalette.prepareActivity(this);super.onCreate(saved);
+        theme=ThemePalette.of(this);
+        appearance=ThemePalette.getMode(this);dark=theme.dark;
         ThemePalette.applyWindow(this,theme);
         getWindow().getDecorView().setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
-        ScrollView scroll=new ScrollView(this);scroll.setBackgroundColor(theme.bg);
-        scroll.setFillViewport(true);
+        ScrollView scroll=new ScrollView(this);
+        scroll.setBackgroundColor(theme.bg);scroll.setFillViewport(true);
         if(Build.VERSION.SDK_INT>=35){
             scroll.setClipToPadding(true);
             scroll.setOnApplyWindowInsetsListener((v,insets)->{
-                android.graphics.Insets a=insets.getInsets(WindowInsets.Type.statusBars()|WindowInsets.Type.displayCutout());
-                android.graphics.Insets z=insets.getInsets(WindowInsets.Type.navigationBars());
-                v.setPadding(0,a.top,0,z.bottom);return insets;
+                android.graphics.Insets top=insets.getInsets(
+                        WindowInsets.Type.statusBars()|WindowInsets.Type.displayCutout());
+                android.graphics.Insets bottom=insets.getInsets(WindowInsets.Type.navigationBars());
+                v.setPadding(0,top.top,0,bottom.bottom);return insets;
             });
         }
         sidebar=Sidebar.attach(this,scroll,"quality");
-        LinearLayout root=col();root.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
-        root.setPadding(dp(17),dp(16),dp(17),dp(25));scroll.addView(root);
-        LinearLayout header=row();header.setPadding(dp(8),dp(7),dp(8),dp(7));
-        header.setBackground(surface(theme.card,theme.border,18));
+        LinearLayout root=col();
+        root.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+        root.setPadding(dp(17),dp(16),dp(17),dp(24));
+        scroll.addView(root);
+
+        LinearLayout header=row();header.setMinimumHeight(dp(65));
+        header.setPadding(dp(8),dp(7),dp(8),dp(7));
+        header.setBackground(shape(theme.card,theme.border,18));
         Button menu=button("☰",theme.accentSoft,theme.accent);
-        menu.setTextSize(22);
-        header.addView(menu,new LinearLayout.LayoutParams(dp(53),dp(48)));
+        menu.setTextSize(21);
+        header.addView(menu,new LinearLayout.LayoutParams(dp(54),dp(48)));
         menu.setOnClickListener(v->sidebar.open());
-        TextView logo=text("MT_TOOLS",22,theme.primary,true);
+        TextView logo=text("MT_TOOLS",23,theme.primary,true);
         logo.setTextDirection(View.TEXT_DIRECTION_LTR);
-        LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,-2,1);lp.rightMargin=dp(10);
-        header.addView(logo,lp);
+        LinearLayout.LayoutParams logoParams=new LinearLayout.LayoutParams(0,-2,1);
+        logoParams.rightMargin=dp(10);
+        header.addView(logo,logoParams);
         ThemeSelector.attachIcon(this,header);
         root.addView(header);
         root.addView(text("تقييم أداء الإنترنت",20,theme.primary,true),margin(-1,-2,18));
-        root.addView(text("تشخيص جودة الاتصال ومشاكل الاستجابة وDNS وسرعة النقل",12,theme.muted,false),margin(-1,-2,5));
+        root.addView(text("قياس السرعة، استقرار الاتصال، والاستجابة تحت الضغط",12,theme.muted,false),margin(-1,-2,5));
 
-        LinearLayout hero=panel(root,null);
-        score=text("— / 100",40,theme.accent,true);score.setGravity(Gravity.CENTER);
-        score.setTextDirection(View.TEXT_DIRECTION_LTR);hero.addView(score);
-        verdict=text("لم يبدأ الفحص",17,theme.primary,true);verdict.setGravity(Gravity.CENTER);
-        hero.addView(verdict,margin(-1,-2,3));
-        progress=text("اختر نوع الفحص",12,theme.muted,false);progress.setGravity(Gravity.CENTER);
-        hero.addView(progress,margin(-1,-2,6));
+        LinearLayout summary=panel(root,null);
+        gauge=new InternetQualityGauge(this);
+        summary.addView(gauge,new LinearLayout.LayoutParams(-1,dp(184)));
+        verdict=text("ابدأ الفحص لمعرفة حالة الإنترنت",17,theme.primary,true);
+        verdict.setGravity(Gravity.CENTER);
+        summary.addView(verdict,margin(-1,-2,-2));
+        phase=text("جاهز للفحص",12,theme.muted,false);
+        phase.setGravity(Gravity.CENTER);
+        summary.addView(phase,margin(-1,-2,6));
+        confidence=text("",11,theme.muted,false);
+        confidence.setGravity(Gravity.CENTER);
+        summary.addView(confidence,margin(-1,-2,5));
 
-        LinearLayout actions=row();actions.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
-        quick=button("فحص سريع",theme.accent,theme.onAccent);
-        full=button("فحص شامل",theme.accentSoft,theme.accent);
+        LinearLayout actions=row();
+        full=button("▶  فحص شامل",theme.accent,theme.onAccent);
+        quick=button("فحص سريع",theme.accentSoft,theme.accent);
         stop=button("إيقاف",theme.card,theme.danger);
-        LinearLayout.LayoutParams a=new LinearLayout.LayoutParams(0,dp(50),1);
-        a.leftMargin=dp(5);actions.addView(quick,a);
-        LinearLayout.LayoutParams b2=new LinearLayout.LayoutParams(0,dp(50),1);
-        b2.leftMargin=dp(5);actions.addView(full,b2);
-        actions.addView(stop,new LinearLayout.LayoutParams(0,dp(50),.75f));
-        root.addView(actions,margin(-1,-2,10));
-        quick.setOnClickListener(v->start(false));
+        LinearLayout.LayoutParams b1=new LinearLayout.LayoutParams(0,dp(49),1.15f);
+        b1.leftMargin=dp(5);actions.addView(full,b1);
+        LinearLayout.LayoutParams b2=new LinearLayout.LayoutParams(0,dp(49),1);
+        b2.leftMargin=dp(5);actions.addView(quick,b2);
+        actions.addView(stop,new LinearLayout.LayoutParams(0,dp(49),.68f));
+        root.addView(actions,margin(-1,-2,8));
         full.setOnClickListener(v->start(true));
+        quick.setOnClickListener(v->start(false));
         stop.setOnClickListener(v->cancel());
         stop.setEnabled(false);
-        root.addView(text("السريع: Ping وDNS وHTTPS بدون اختبار سرعة كبير. الشامل: يضيف تنزيل نحو 3 MB ورفع نحو 1 MB، وقد تزيد حركة الاتصال قليلاً.",11,theme.muted,false),margin(-1,-2,9));
 
-        LinearLayout measurements=panel(root,"القياسات الفعلية");
-        String[] names={"Google Ping (8.8.8.8)","Cloudflare Ping (1.1.1.1)","فقد الحزم ICMP","التذبذب Jitter","DNS Google (8.8.8.8)","DNS Cloudflare (1.1.1.1)","HTTPS Google","HTTPS Cloudflare","تنزيل Cloudflare","رفع Cloudflare","نوع الاتصال","البوابة Gateway"};
-        metrics=new TextView[names.length];
-        for(int i=0;i<names.length;i++){
-            LinearLayout line=row();
-            line.setPadding(0,dp(10),0,dp(10));
-            TextView label=text(names[i],12,theme.muted,false);
-            line.addView(label,new LinearLayout.LayoutParams(0,-2,1));
-            TextView value=text("—",13,theme.primary,true);
-            value.setTextDirection(View.TEXT_DIRECTION_LTR);value.setGravity(Gravity.LEFT|Gravity.CENTER_VERTICAL);
-            line.addView(value);
-            metrics[i]=value;measurements.addView(line);
-            if(i!=names.length-1){
-                View separator=new View(this);separator.setBackgroundColor(theme.border);
-                measurements.addView(separator,new LinearLayout.LayoutParams(-1,dp(1)));
-            }
-        }
+        LinearLayout fit=panel(root,"مناسب لأي استخدام؟");
+        LinearLayout fitLine=row();fitLine.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+        indicators[0]=mini(fitLine,"الألعاب");
+        indicators[1]=mini(fitLine,"المكالمات");
+        indicators[2]=mini(fitLine,"التصفح");
+        fit.addView(fitLine,margin(-1,-2,12));
+
+        LinearLayout speeds=panel(root,"سرعة الإنترنت");
+        LinearLayout speedTiles=row();speedTiles.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+        down=largeNumber(speedTiles,"↓  التنزيل");
+        up=largeNumber(speedTiles,"↑  الرفع");
+        speeds.addView(speedTiles,margin(-1,-2,13));
+
+        LinearLayout buffer=panel(root,"Bufferbloat · الاستجابة أثناء الضغط");
+        LinearLayout bufferHead=row();
+        grade=text("—",38,theme.accent,true);
+        grade.setTextDirection(View.TEXT_DIRECTION_LTR);
+        bufferHead.addView(grade,new LinearLayout.LayoutParams(dp(76),dp(55)));
+        bufferStatus=text("يُقاس مع الفحص الشامل",13,theme.muted,false);
+        bufferHead.addView(bufferStatus,new LinearLayout.LayoutParams(0,-2,1));
+        buffer.addView(bufferHead,margin(-1,-2,12));
+        idle=rowMetric(buffer,"قبل الضغط");
+        loadedDown=rowMetric(buffer,"أثناء التنزيل");
+        addedDown=rowMetric(buffer,"زيادة تأخير التنزيل");
+        loadedUp=rowMetric(buffer,"أثناء الرفع");
+        addedUp=rowMetric(buffer,"زيادة تأخير الرفع");
+        downP95=rowMetric(buffer,"P95 أثناء التنزيل");
+        upP95=rowMetric(buffer,"P95 أثناء الرفع");
+
+        LinearLayout detail=panel(root,"تفاصيل الشبكة");
+        String[] titles={
+                "Google Ping · 8.8.8.8",
+                "Cloudflare Ping · 1.1.1.1",
+                "فقد ردود Google",
+                "فقد ردود Cloudflare",
+                "التذبذب Jitter",
+                "DNS Google",
+                "DNS Cloudflare",
+                "HTTPS Google",
+                "HTTPS Cloudflare",
+                "نوع الاتصال",
+                "Gateway"};
+        metrics=new TextView[titles.length];
+        for(int i=0;i<titles.length;i++)metrics[i]=rowMetric(detail,titles[i]);
+
         LinearLayout advice=panel(root,"التشخيص والتوصيات");
-        diagnosis=text("ابدأ الفحص حتى تظهر حالة الإنترنت وأي مؤشرات للمشاكل.",13,theme.primary,false);
-        diagnosis.setLineSpacing(dp(5),1.1f);advice.addView(diagnosis,margin(-1,-2,10));
-        root.addView(text("ملاحظة: نتائج ICMP تتأثر بحجب الردود. اختبار سرعة Cloudflare تقريبي لخادم واحد، ولا يمثل بالضرورة السرعة القصوى لاشتراكك. لا يتم قياس Bufferbloat في هذه النسخة.",11,theme.muted,false),margin(-1,-2,13));
+        diagnosis=text("ابدأ الفحص الشامل للحصول على تحليل الاستجابة تحت الضغط.",13,theme.primary,false);
+        diagnosis.setLineSpacing(dp(4),1.1f);
+        advice.addView(diagnosis,margin(-1,-2,12));
         AppFooter.add(this,root);
     }
-    private static String ms(double n){return n<0?"غير متاح":String.format(Locale.US,"%.1f ms",n);}
-    private static String mbps(double n){return n<0?"لم يُقَس":String.format(Locale.US,"%.2f Mbps",n);}
-    private void display(InternetQualityEngine.Report r,String phase){
+
+    private static String ms(double n){return n<0?"—":String.format(Locale.US,"%.1f ms",n);}
+    private static String plus(double n){return n<0?"—":String.format(Locale.US,"+%.1f ms",n);}
+    private static String speed(double n){return n<0?"—":String.format(Locale.US,"%.2f Mbps",n);}
+    private static String loss(double n){return n<0?"غير مؤكد":String.format(Locale.US,"%.1f%%",n);}
+    private static String rating(int n){return n<0?"—":n+"/100";}
+    private void show(InternetQualityEngine.Report r,String step){
         if(destroyed)return;
-        progress.setText(phase);verdict.setText(r.verdict);
-        score.setText(r.score<0?"— / 100":r.score+" / 100");
-        score.setTextColor(r.score<0?theme.accent:r.score>=75?theme.accent:
-                r.score>=55?theme.warning:theme.danger);
+        gauge.setValue(r.score);
+        verdict.setText(r.verdict);
+        phase.setText(step);
+        confidence.setText(r.score<0?"":r.confidence+"% من أوزان الفحوص توفرت لها قياسات");
+        indicators[0].setText(rating(r.gaming));
+        indicators[1].setText(rating(r.calls));
+        indicators[2].setText(rating(r.browsing));
+        for(int i=0;i<indicators.length;i++){
+            int s=i==0?r.gaming:i==1?r.calls:r.browsing;
+            indicators[i].setTextColor(qualityColor(s));
+        }
+        down.setText(speed(r.downloadMbps));
+        up.setText(speed(r.uploadMbps));
+        grade.setText(r.bufferGrade);
+        grade.setTextColor("—".equals(r.bufferGrade)?theme.muted:
+                "A+".equals(r.bufferGrade)||"A".equals(r.bufferGrade)||"B".equals(r.bufferGrade)?
+                        theme.accent:"C".equals(r.bufferGrade)?theme.warning:theme.danger);
+        bufferStatus.setText("—".equals(r.bufferGrade)?"يُقاس مع الفحص الشامل":
+                "A+".equals(r.bufferGrade)||"A".equals(r.bufferGrade)?"استجابة ممتازة تحت الحمل":
+                "B".equals(r.bufferGrade)?"استجابة جيدة تحت الحمل":
+                "C".equals(r.bufferGrade)?"تأخير متوسط تحت الحمل":"ازدحام ملحوظ تحت الحمل");
+        idle.setText(ms(r.idleMs));
+        loadedDown.setText(ms(r.loadDownMs));
+        loadedUp.setText(ms(r.loadUpMs));
+        addedDown.setText(plus(r.downDelta));
+        addedUp.setText(plus(r.upDelta));
+        addedDown.setTextColor(r.downDelta<0?theme.muted:r.downDelta<=30?theme.accent:
+                r.downDelta<=60?theme.warning:theme.danger);
+        addedUp.setTextColor(r.upDelta<0?theme.muted:r.upDelta<=30?theme.accent:
+                r.upDelta<=60?theme.warning:theme.danger);
+        downP95.setText(ms(r.downP95));upP95.setText(ms(r.upP95));
         metrics[0].setText(ms(r.googleMs));
         metrics[1].setText(ms(r.cloudflareMs));
-        metrics[2].setText(r.lossPercent<0?"غير متاح":String.format(Locale.US,"%.1f%%",r.lossPercent));
-        metrics[3].setText(ms(r.jitterMs));
-        metrics[4].setText(ms(r.dnsGoogleMs));
-        metrics[5].setText(ms(r.dnsCloudflareMs));
-        metrics[6].setText(ms(r.httpsGoogleMs));
-        metrics[7].setText(ms(r.httpsCloudflareMs));
-        metrics[8].setText(mbps(r.downloadMbps));
-        metrics[9].setText(mbps(r.uploadMbps));
-        metrics[10].setText(r.transport);
-        metrics[11].setText(r.gateway);
+        metrics[2].setText(loss(r.googleLoss));
+        metrics[3].setText(loss(r.cloudflareLoss));
+        metrics[4].setText(ms(r.jitterMs));
+        metrics[5].setText(ms(r.dnsGoogleMs));
+        metrics[6].setText(ms(r.dnsCloudflareMs));
+        metrics[7].setText(ms(r.httpsGoogleMs));
+        metrics[8].setText(ms(r.httpsCloudflareMs));
+        metrics[9].setText(r.transport);
+        metrics[10].setText(r.gateway);
         diagnosis.setText(r.diagnosis);
     }
-    private void start(boolean complete){
+
+    private void start(boolean comprehensive){
         cancel();
         final int ticket=++runId;
-        final InternetQualityEngine run=new InternetQualityEngine();
-        engine=run;
+        final InternetQualityEngine job=new InternetQualityEngine();
+        engine=job;
         quick.setEnabled(false);full.setEnabled(false);stop.setEnabled(true);
-        InternetQualityEngine.Report blank=new InternetQualityEngine.Report();
-        display(blank,"جارٍ تجهيز الفحص...");
+        show(new InternetQualityEngine.Report(),"جارٍ تجهيز الفحص...");
         worker=new Thread(()->{
             try{
-                InternetQualityEngine.Report result=run.run(getApplicationContext(),complete,
+                InternetQualityEngine.Report result=job.run(getApplicationContext(),comprehensive,
                         (step,partial)->ui.post(()->{
-                            if(!destroyed&&ticket==runId)display(partial,"جارٍ "+step);
+                            if(!destroyed&&ticket==runId)
+                                show(partial,"اكتمل الفحص".equals(step)?step:"جارٍ "+step);
                         }));
-                ui.post(()->{if(!destroyed&&ticket==runId){
-                    display(result,"اكتمل الفحص");finishRun();
-                }});
+                ui.post(()->{
+                    if(!destroyed&&ticket==runId){show(result,"اكتمل الفحص");finishRun();}
+                });
             }catch(InterruptedException ignored){
                 Thread.currentThread().interrupt();
             }catch(Exception ex){
-                ui.post(()->{if(!destroyed&&ticket==runId){
-                    progress.setText("تعذّر إكمال الفحص");
-                    diagnosis.setText("حدث خطأ في الفحص: "+ex.getClass().getSimpleName());
-                    finishRun();
-                }});
+                ui.post(()->{
+                    if(!destroyed&&ticket==runId){
+                        phase.setText("تعذّر إكمال الفحص");
+                        diagnosis.setText("حدث خطأ: "+ex.getClass().getSimpleName());
+                        finishRun();
+                    }
+                });
             }
-        },"internet-quality");
+        },"quality-diagnostics");
         worker.start();
     }
     private void finishRun(){
@@ -199,7 +311,7 @@ public final class InternetQualityActivity extends Activity {
         if(worker!=null)worker.interrupt();
         engine=null;worker=null;
         if(quick!=null){quick.setEnabled(true);full.setEnabled(true);stop.setEnabled(false);}
-        if(progress!=null)progress.setText("تم إيقاف الفحص");
+        if(phase!=null)phase.setText("تم إيقاف الفحص");
     }
     @Override protected void onResume(){
         super.onResume();
