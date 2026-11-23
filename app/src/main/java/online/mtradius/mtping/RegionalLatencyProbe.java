@@ -69,14 +69,14 @@ final class RegionalLatencyProbe {
                 for(int j=0;j<Math.min(2,choices.length);j++){
                     InetAddress ip=choices[j];
                     ArrayList<Double> results=new ArrayList<>();
-                    for(int i=0;i<3;i++){
+                    for(int i=0;i<6;i++){
                         double n=sample(ip);
                         if(n>=0)results.add(n);
                     }
-                    if(results.size()<2)continue;
+                    if(results.size()<4)continue;
                     double med=percentile(results,.5);
                     Endpoint candidate=new Endpoint(host,ip,med,percentile(results,0),
-                            jitter(results),3,results.size());
+                            jitter(results),6,results.size());
                     // Prefer shortest successful TCP path, not an average of distant hosts.
                     if(best==null||candidate.medianMs<best.medianMs)best=candidate;
                     break;
