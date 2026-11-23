@@ -119,7 +119,7 @@ jobs:
             - تحسين معالجة عدم توافر ICMP أو DNS ومنع احتساب العينات المفقودة على أنها ناجحة.
             - حذف التحذير السفلي والكلام المتعلق باستهلاك البيانات.
             - دعم RTL والثيم الفاتح والداكن وإيقاف الفحص؛ دون تغيير بقية أدوات MT_TOOLS.
-                    files: MT_TOOLS.apk
+          files: MT_TOOLS.apk
           fail_on_unmatched_files: true
           overwrite_files: true
         env:
