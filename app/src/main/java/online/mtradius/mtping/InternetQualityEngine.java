@@ -41,6 +41,7 @@ final class InternetQualityEngine {
         double httpsGoogleMs=-1, httpsCloudflareMs=-1, downloadMbps=-1, uploadMbps=-1;
         double idleMs=-1, loadDownMs=-1, loadUpMs=-1, downDelta=-1, upDelta=-1;
         double downP95=-1,upP95=-1;
+        int downSamples=0,upSamples=0;
         double nearMs=-1,nearMin=-1,nearJitter=-1,cfDownload=-1,cfUpload=-1,mlabDownload=-1,mlabUpload=-1;
         String nearHost="—",mlabServer="—";
         final List<String> notes=new ArrayList<>();
@@ -55,6 +56,7 @@ final class InternetQualityEngine {
             v.downloadMbps=downloadMbps;v.uploadMbps=uploadMbps;v.idleMs=idleMs;
             v.loadDownMs=loadDownMs;v.loadUpMs=loadUpMs;v.downDelta=downDelta;
             v.upDelta=upDelta;v.downP95=downP95;v.upP95=upP95;
+            v.downSamples=downSamples;v.upSamples=upSamples;
             v.nearMs=nearMs;v.nearMin=nearMin;v.nearJitter=nearJitter;v.nearHost=nearHost;
             v.cfDownload=cfDownload;v.cfUpload=cfUpload;
             v.mlabDownload=mlabDownload;v.mlabUpload=mlabUpload;v.mlabServer=mlabServer;
@@ -247,7 +249,9 @@ final class InternetQualityEngine {
         // A valid loaded sample requires visible concurrent payload traffic.
         if(latencySamples.size()>=5){
             phase.loaded=median(latencySamples);
-            phase.p95=percentile(latencySamples,0.95);
+            // P95 from very few samples is dominated by one TCP handshake.
+            // Only publish it once there are enough active-load observations.
+            phase.p95=latencySamples.size()>=8?percentile(latencySamples,0.95):-1;
             phase.samples=latencySamples.size();
         }
         return phase;
@@ -350,12 +354,12 @@ final class InternetQualityEngine {
             if(quiet.size()>=5)r.idleMs=median(quiet);
             check();report(listener,"تنزيل متعدد الاتصالات واختبار الاستجابة",r);
             Phase down=stressedPhase(false,r,listener);
-            r.cfDownload=down.rate;r.loadDownMs=down.loaded;r.downP95=down.p95;
+            r.cfDownload=down.rate;r.loadDownMs=down.loaded;r.downP95=down.p95;r.downSamples=down.samples;
             if(r.idleMs>=0&&r.loadDownMs>=0)
                 r.downDelta=RegionalLatencyProbe.extraLatency(r.idleMs,r.loadDownMs);
             check();report(listener,"رفع متعدد الاتصالات واختبار الاستجابة",r);
             Phase up=stressedPhase(true,r,listener);
-            r.cfUpload=up.rate;r.loadUpMs=up.loaded;r.upP95=up.p95;
+            r.cfUpload=up.rate;r.loadUpMs=up.loaded;r.upP95=up.p95;r.upSamples=up.samples;
             if(r.idleMs>=0&&r.loadUpMs>=0)
                 r.upDelta=RegionalLatencyProbe.extraLatency(r.idleMs,r.loadUpMs);
             check();report(listener,"اختبار مستقل عبر M-Lab",r);
