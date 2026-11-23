@@ -26,7 +26,7 @@ public final class InternetQualityActivity extends Activity {
     private TextView verdict,phase,confidence,grade,bufferStatus,down,up,diagnosis;
     private TextView[] indicators=new TextView[3];
     private TextView[] metrics;
-    private TextView idle,loadedDown,loadedUp,addedDown,addedUp,downP95,upP95;
+    private TextView idle,loadedDown,loadedUp,addedDown,addedUp,downP95,upP95,bufferSamples;
     private TextView nearestRtt,nearestMin,nearestName,nearestJitter;
     private TextView mlabDown,mlabUp,cloudDown,cloudUp,mlabName;
     private Button quick,full;
@@ -206,6 +206,7 @@ public final class InternetQualityActivity extends Activity {
         addedUp=rowMetric(buffer,"زيادة تأخير الرفع");
         downP95=rowMetric(buffer,"P95 أثناء التنزيل");
         upP95=rowMetric(buffer,"P95 أثناء الرفع");
+        bufferSamples=rowMetric(buffer,"عينات الضغط · تنزيل / رفع");
 
         LinearLayout detail=panel(root,"تفاصيل الشبكة");
         String[] titles={
@@ -263,7 +264,11 @@ public final class InternetQualityActivity extends Activity {
         grade.setTextColor("—".equals(r.bufferGrade)?theme.muted:
                 "A+".equals(r.bufferGrade)||"A".equals(r.bufferGrade)||"B".equals(r.bufferGrade)?
                         theme.accent:"C".equals(r.bufferGrade)?theme.warning:theme.danger);
+        boolean tailSpikes=r.idleMs>=0&&
+                ((r.downSamples>=8&&r.downP95>=0&&r.downP95-r.idleMs>250)||
+                 (r.upSamples>=8&&r.upP95>=0&&r.upP95-r.idleMs>250));
         bufferStatus.setText("—".equals(r.bufferGrade)?"لم تكتمل عينات الضغط بالاتجاهين":
+                tailSpikes?"استجابة متقطعة · قفزات في P95":
                 "A+".equals(r.bufferGrade)||"A".equals(r.bufferGrade)?"استجابة ممتازة تحت الحمل":
                 "B".equals(r.bufferGrade)?"استجابة جيدة تحت الحمل":
                 "C".equals(r.bufferGrade)?"تأخير متوسط تحت الحمل":"ازدحام ملحوظ تحت الحمل");
@@ -277,6 +282,8 @@ public final class InternetQualityActivity extends Activity {
         addedUp.setTextColor(r.upDelta<0?theme.muted:r.upDelta<=30?theme.accent:
                 r.upDelta<=60?theme.warning:theme.danger);
         downP95.setText(ms(r.downP95));upP95.setText(ms(r.upP95));
+        bufferSamples.setText(r.downSamples==0&&r.upSamples==0?"—":
+                r.downSamples+" / "+r.upSamples);
         metrics[0].setText(ms(r.googleMs));
         metrics[1].setText(ms(r.cloudflareMs));
         metrics[2].setText(loss(r.googleLoss));
